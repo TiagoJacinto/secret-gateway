@@ -1,5 +1,92 @@
 # secret-gateway
 
-A local gateway between Claude Code and the Anthropic API. It masks secrets in everything sent to the model, replaces placeholders with real values in tool calls, and lets you review masked values without blocking the agent.
+A local gateway between Claude Code and the Anthropic Messages API. It masks secrets in everything sent to the model, restores placeholders in tool calls, and lets you review masked values without blocking the agent.
 
-Personal use. Bun and TypeScript.
+Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
+
+## What it does
+
+- Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
+- Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
+- Restores placeholders in tool-use inputs of responses, including streamed responses.
+- Masks secrets in screenshots by reading them with local OCR and painting a labelled black box over each one.
+- Holds every new detection masked until you answer it on a local review page. Answers are remembered by identity.
+- Refuses a request rather than sending it raw when masking, OCR or the upstream fails.
+
+## Setup
+
+Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscription (`claude auth status` should show `loggedIn: true`). No API key is needed.
+
+1. Install project dependencies. The versions are pinned in `package.json`.
+
+   ```sh
+   bun install
+   ```
+
+2. Install the provider scanner into `.tools/bin` (gitignored). The version is Betterleaks 1.9.0 and the archive checksum is `f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7`.
+
+   ```sh
+   mkdir -p .tools/bin
+   curl -fsSL -o /tmp/betterleaks.tar.gz https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz
+   echo "f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7  /tmp/betterleaks.tar.gz" | sha256sum -c -
+   tar -xzf /tmp/betterleaks.tar.gz -C .tools/bin betterleaks
+   .tools/bin/betterleaks version
+   ```
+
+   The OCR language data comes from the `@tesseract.js-data/eng` package, so nothing is downloaded at run time. Screenshot OCR needs no system package.
+
+3. Optional, for the OCR benchmark only: a project-local RapidOCR environment.
+
+   ```sh
+   python3 -m venv .tools/rapidocr-venv
+   .tools/rapidocr-venv/bin/pip install rapidocr==3.10.0 onnxruntime==1.31.0
+   ```
+
+## Run
+
+Start the gateway in its own terminal. It keeps running until you stop it.
+
+```sh
+cd /path/to/secret-gateway
+bun run start
+```
+
+It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, data in `~/.local/share/secret-gateway` (`identity.key` with mode 0600, `answers.sqlite`). Change them with environment variables, and see the verification README for the full list.
+
+## Use Claude Code through the gateway
+
+Add this alias to your own shell configuration. This repository does not install it:
+
+```sh
+alias claude-masked='ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude'
+```
+
+Then start a session with `claude-masked`. The alias only sets the base URL. If the gateway is not running, the alias gives no fallback, so requests fail. This was checked from the configuration only; it was not tested live.
+
+## Review detections
+
+Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`) and length. It never shows a value.
+
+- **Secret** keeps the value masked.
+- **Not a secret** unmasks the value from the next request onward, across the whole history. Expect a cost spike in prompt caching when you do this.
+
+The page only answers requests from the page itself. Desktop notifications are sent with a link to this page. On this machine, their buttons do not appear (see Limits).
+
+## Verify
+
+```sh
+python3 .agents/verification/scripts/check.py
+bun run bench/scanner.ts
+bun run bench/ocr.ts
+```
+
+These run the HTTP-boundary journeys, the scanner benchmark and the OCR benchmark. The commands and results are in [.agents/verification/README.md](.agents/verification/README.md).
+
+## Limits
+
+- **OCR exact reads are not met.** Tesseract reads 2 of 7 fixture keys exactly. RapidOCR reads 4 of 7 and gives line boxes only. Misread keys are still painted, but a placeholder for a misread key restores a wrong value. Use the Copy button and paste rather than reading values from screenshots.
+- Desktop notification buttons need an AppArmor change to `notify-send` on this machine. Not changed. Notifications are plain, and the review page answers.
+- Scanner-alone recall is low for Cloudflare, Neon, Google and AWS formats. The name and entropy layers cover them in the full pipeline.
+- Thinking blocks are not changed. Tool definitions are not scanned. Document blocks and URL images are withheld, not scanned.
+- Not covered: Codex or other agents, a trained visual detector, hosted use, multiple users, and live validation with providers.
+- Claude Code's own transcripts keep real values, as they did before.

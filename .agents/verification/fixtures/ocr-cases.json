@@ -1,0 +1,96 @@
+[
+  {
+    "id": "cloudflare-token",
+    "file": "images/cloudflare-token.png",
+    "title": "Cloudflare dashboard - API tokens",
+    "keys": [
+      "cfut_A1aet0W8ZkKWeLtUp8AXBuJd4SwSPzGbIOmA2vFP"
+    ],
+    "keyBoxes": [
+      [
+        292,
+        168,
+        834,
+        188
+      ]
+    ]
+  },
+  {
+    "id": "neon-key",
+    "file": "images/neon-key.png",
+    "title": "Neon console - API keys",
+    "keys": [
+      "npg_DZoAbxWZS8VMPzVK",
+      "quiet-river-123456"
+    ],
+    "keyBoxes": [
+      [
+        292,
+        168,
+        533,
+        188
+      ],
+      [
+        292,
+        318,
+        509,
+        337
+      ]
+    ]
+  },
+  {
+    "id": "google-client",
+    "file": "images/google-client.png",
+    "title": "Google Cloud - OAuth client",
+    "keys": [
+      "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"
+    ],
+    "keyBoxes": [
+      [
+        292,
+        168,
+        714,
+        188
+      ]
+    ]
+  },
+  {
+    "id": "github-token",
+    "file": "images/github-token.png",
+    "title": "GitHub - Developer settings",
+    "keys": [
+      "ghp_c1KlGDVNMIEysUDGApSNJQ6Y2SOhfzJo8qoN"
+    ],
+    "keyBoxes": [
+      [
+        292,
+        168,
+        774,
+        188
+      ]
+    ]
+  },
+  {
+    "id": "multi-key",
+    "file": "images/multi-key.png",
+    "title": "Provider keys",
+    "keys": [
+      "sk-ant-api03-6GLSCVbyi4w-aNR6jCQZgIdAIX1V3cBYVwxsQaXzjyEtveOmZu-e3czDVOZQVTFSm6Lb2S5Waiq412aRTVcr6EKihBQv6AA",
+      "AKIAQ0JLDI5ZY9HS2TCX"
+    ],
+    "keyBoxes": [
+      [
+        292,
+        168,
+        1593,
+        187
+      ],
+      [
+        292,
+        318,
+        533,
+        336
+      ]
+    ]
+  }
+]

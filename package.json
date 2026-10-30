@@ -1,0 +1,15 @@
+{
+  "name": "secret-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local masking gateway between Claude Code and the Anthropic Messages API",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/main.ts"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "sharp": "0.35.5",
+    "tesseract.js": "7.0.0"
+  }
+}

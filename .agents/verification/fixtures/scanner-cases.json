@@ -1,0 +1,498 @@
+[
+  {
+    "id": "cloudflare-env-assignment",
+    "kind": "positive",
+    "family": "cloudflare",
+    "text": "export CLOUDFLARE_API_TOKEN=cfut_55xXuiTmyNlPemfsVtALWl5sx2p9FVs6PYs83qhl",
+    "secrets": [
+      "cfut_55xXuiTmyNlPemfsVtALWl5sx2p9FVs6PYs83qhl"
+    ]
+  },
+  {
+    "id": "cloudflare-yaml-pair",
+    "kind": "positive",
+    "family": "cloudflare",
+    "text": "CLOUDFLARE_API_TOKEN: cfut_pv1cGuQ9T8siCiujqlfdzccIxspgpXi7gehOkOPi",
+    "secrets": [
+      "cfut_pv1cGuQ9T8siCiujqlfdzccIxspgpXi7gehOkOPi"
+    ]
+  },
+  {
+    "id": "cloudflare-prose",
+    "kind": "positive",
+    "family": "cloudflare",
+    "text": "the key is cfut_FJ8o2zDUt4YmNKLn9VG3Zrc0W4bOdkOpifW3PRK7, please keep it private",
+    "secrets": [
+      "cfut_FJ8o2zDUt4YmNKLn9VG3Zrc0W4bOdkOpifW3PRK7"
+    ]
+  },
+  {
+    "id": "cloudflare-bearer-header",
+    "kind": "positive",
+    "family": "cloudflare",
+    "text": "curl -H \"Authorization: Bearer cfut_2ersH0psocENDDJxWxNTpkZSB9RMKv1kATTE1wae\" https://api.example.test/v1/me",
+    "secrets": [
+      "cfut_2ersH0psocENDDJxWxNTpkZSB9RMKv1kATTE1wae"
+    ]
+  },
+  {
+    "id": "cloudflare-json-field",
+    "kind": "positive",
+    "family": "cloudflare",
+    "text": "{\"cloudflare_api_token\": \"cfut_7ia2mdrcadYtfGRWq7zUZ6x0TWd2jswL1M0F3F2k\"}",
+    "secrets": [
+      "cfut_7ia2mdrcadYtfGRWq7zUZ6x0TWd2jswL1M0F3F2k"
+    ]
+  },
+  {
+    "id": "neon-env-assignment",
+    "kind": "positive",
+    "family": "neon",
+    "text": "export NEON_API_KEY=npg_zEPsgQsNhpTL0hZn",
+    "secrets": [
+      "npg_zEPsgQsNhpTL0hZn"
+    ]
+  },
+  {
+    "id": "neon-yaml-pair",
+    "kind": "positive",
+    "family": "neon",
+    "text": "NEON_API_KEY: npg_0Vc96l2tKaVPcDSH",
+    "secrets": [
+      "npg_0Vc96l2tKaVPcDSH"
+    ]
+  },
+  {
+    "id": "neon-prose",
+    "kind": "positive",
+    "family": "neon",
+    "text": "the key is npg_kJCBSCxZNRf7eIA3, please keep it private",
+    "secrets": [
+      "npg_kJCBSCxZNRf7eIA3"
+    ]
+  },
+  {
+    "id": "neon-bearer-header",
+    "kind": "positive",
+    "family": "neon",
+    "text": "curl -H \"Authorization: Bearer npg_pkUbqxYXOBb66db6\" https://api.example.test/v1/me",
+    "secrets": [
+      "npg_pkUbqxYXOBb66db6"
+    ]
+  },
+  {
+    "id": "neon-json-field",
+    "kind": "positive",
+    "family": "neon",
+    "text": "{\"neon_api_key\": \"npg_APgCgXsRzmboomIZ\"}",
+    "secrets": [
+      "npg_APgCgXsRzmboomIZ"
+    ]
+  },
+  {
+    "id": "google-oauth-client-secret-env-assignment",
+    "kind": "positive",
+    "family": "google-oauth-client-secret",
+    "text": "export GOOGLE_CLIENT_SECRET=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",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "google-oauth-client-secret-yaml-pair",
+    "kind": "positive",
+    "family": "google-oauth-client-secret",
+    "text": "GOOGLE_CLIENT_SECRET: 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",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "google-oauth-client-secret-prose",
+    "kind": "positive",
+    "family": "google-oauth-client-secret",
+    "text": "the key is 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, please keep it private",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "google-oauth-client-secret-bearer-header",
+    "kind": "positive",
+    "family": "google-oauth-client-secret",
+    "text": "curl -H \"Authorization: Bearer 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\" https://api.example.test/v1/me",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "google-oauth-client-secret-json-field",
+    "kind": "positive",
+    "family": "google-oauth-client-secret",
+    "text": "{\"google_client_secret\": \"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\"}",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "google-access-token-env-assignment",
+    "kind": "positive",
+    "family": "google-access-token",
+    "text": "export GOOGLE_ACCESS_TOKEN=ya29.RfxNN1mpxIqSHeY5X3QSfwMdGvM8EtUtsiGdGSipB2Yvtzt0hfodnC01QFuIDsu0KEmnpZrS8jx0FI0TbAd7UjSIB_f88mGuyVCt9ZmzxUDdq2TWzFtJgCdB",
+    "secrets": [
+      "ya29.RfxNN1mpxIqSHeY5X3QSfwMdGvM8EtUtsiGdGSipB2Yvtzt0hfodnC01QFuIDsu0KEmnpZrS8jx0FI0TbAd7UjSIB_f88mGuyVCt9ZmzxUDdq2TWzFtJgCdB"
+    ]
+  },
+  {
+    "id": "google-access-token-yaml-pair",
+    "kind": "positive",
+    "family": "google-access-token",
+    "text": "GOOGLE_ACCESS_TOKEN: ya29.jY3dWUFWPzZB-VNXwIVa_vreZUXYH1R5s0ueHIcMu6CFay-5cXwToQs6t0tX39iEvSnIBsuJHJx4eHlUjV_7IudxG5pXu2KzKC0S6HzFu4DFvF1aWwFEZXHD",
+    "secrets": [
+      "ya29.jY3dWUFWPzZB-VNXwIVa_vreZUXYH1R5s0ueHIcMu6CFay-5cXwToQs6t0tX39iEvSnIBsuJHJx4eHlUjV_7IudxG5pXu2KzKC0S6HzFu4DFvF1aWwFEZXHD"
+    ]
+  },
+  {
+    "id": "google-access-token-prose",
+    "kind": "positive",
+    "family": "google-access-token",
+    "text": "the key is ya29.6OQndPlCfwOkgB7swTTyGxrop_DNnBwwpM92GO7ekoglkqcufzrqTIcrpxRInx41sURiUh5GOyOQqeQk3t5mvQq_2j5AEqkZU60dFO4YV_3MjB7QpnH3Pfhp, please keep it private",
+    "secrets": [
+      "ya29.6OQndPlCfwOkgB7swTTyGxrop_DNnBwwpM92GO7ekoglkqcufzrqTIcrpxRInx41sURiUh5GOyOQqeQk3t5mvQq_2j5AEqkZU60dFO4YV_3MjB7QpnH3Pfhp"
+    ]
+  },
+  {
+    "id": "google-access-token-bearer-header",
+    "kind": "positive",
+    "family": "google-access-token",
+    "text": "curl -H \"Authorization: Bearer ya29.wGa9dB9MgL9HgbN_A0Sb3FAuZEVOicK5bYCADAwUjv_nv_H5neNa6WESKsMw3hzkX-_mnFerF-Zz5Bq7ls6jpUEEMJsDRqr1WYTi14c7mxP6PiLHAknit7Td\" https://api.example.test/v1/me",
+    "secrets": [
+      "ya29.wGa9dB9MgL9HgbN_A0Sb3FAuZEVOicK5bYCADAwUjv_nv_H5neNa6WESKsMw3hzkX-_mnFerF-Zz5Bq7ls6jpUEEMJsDRqr1WYTi14c7mxP6PiLHAknit7Td"
+    ]
+  },
+  {
+    "id": "google-access-token-json-field",
+    "kind": "positive",
+    "family": "google-access-token",
+    "text": "{\"google_access_token\": \"ya29.QC1vLHtyB103ONKtnL5mg3qwR4C6rtZjrpqLs6jyW_PfEpysGaknC9CERexMDk-pE2C3hYcyiLT32MLnSLhpWXTC5-EX9ZjU0tZhTfJnvCCzrkROD2N1XRjw\"}",
+    "secrets": [
+      "ya29.QC1vLHtyB103ONKtnL5mg3qwR4C6rtZjrpqLs6jyW_PfEpysGaknC9CERexMDk-pE2C3hYcyiLT32MLnSLhpWXTC5-EX9ZjU0tZhTfJnvCCzrkROD2N1XRjw"
+    ]
+  },
+  {
+    "id": "github-pat-env-assignment",
+    "kind": "positive",
+    "family": "github-pat",
+    "text": "export GITHUB_TOKEN=ghp_XIAUqkv2NeU5fRySDHXfmSh9n34ohJEhII42",
+    "secrets": [
+      "ghp_XIAUqkv2NeU5fRySDHXfmSh9n34ohJEhII42"
+    ]
+  },
+  {
+    "id": "github-pat-yaml-pair",
+    "kind": "positive",
+    "family": "github-pat",
+    "text": "GITHUB_TOKEN: ghp_PHveqg3W2GttcScJiVzhhBexM1tOIlqIvG7x",
+    "secrets": [
+      "ghp_PHveqg3W2GttcScJiVzhhBexM1tOIlqIvG7x"
+    ]
+  },
+  {
+    "id": "github-pat-prose",
+    "kind": "positive",
+    "family": "github-pat",
+    "text": "the key is ghp_HUvVb8hHktbrGxNS0wo4OeYpq4Zjjx9l32vW, please keep it private",
+    "secrets": [
+      "ghp_HUvVb8hHktbrGxNS0wo4OeYpq4Zjjx9l32vW"
+    ]
+  },
+  {
+    "id": "github-pat-bearer-header",
+    "kind": "positive",
+    "family": "github-pat",
+    "text": "curl -H \"Authorization: Bearer ghp_58DUeclZVTU9b1obMcr5HVdXEwxN53UtyHGn\" https://api.example.test/v1/me",
+    "secrets": [
+      "ghp_58DUeclZVTU9b1obMcr5HVdXEwxN53UtyHGn"
+    ]
+  },
+  {
+    "id": "github-pat-json-field",
+    "kind": "positive",
+    "family": "github-pat",
+    "text": "{\"github_token\": \"ghp_VsutYzun8TwL05Km1KYcRWyd9hUKGHi9AXQ8\"}",
+    "secrets": [
+      "ghp_VsutYzun8TwL05Km1KYcRWyd9hUKGHi9AXQ8"
+    ]
+  },
+  {
+    "id": "github-fine-grained-env-assignment",
+    "kind": "positive",
+    "family": "github-fine-grained",
+    "text": "export GH_FINE_TOKEN=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",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "github-fine-grained-yaml-pair",
+    "kind": "positive",
+    "family": "github-fine-grained",
+    "text": "GH_FINE_TOKEN: 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",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "github-fine-grained-prose",
+    "kind": "positive",
+    "family": "github-fine-grained",
+    "text": "the key is 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, please keep it private",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "github-fine-grained-bearer-header",
+    "kind": "positive",
+    "family": "github-fine-grained",
+    "text": "curl -H \"Authorization: Bearer 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\" https://api.example.test/v1/me",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "github-fine-grained-json-field",
+    "kind": "positive",
+    "family": "github-fine-grained",
+    "text": "{\"gh_fine_token\": \"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\"}",
+    "secrets": [
+      "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"
+    ]
+  },
+  {
+    "id": "anthropic-env-assignment",
+    "kind": "positive",
+    "family": "anthropic",
+    "text": "export ANTHROPIC_API_KEY=sk-ant-api03-0fUqDxvvijJ14l0UEe8vLnAQpWGPQg8WsnA7mR-0dVGC1YfmrZ02eyRj7fsjMhorVIKgBoygao5sCK6oWak-SeIX59bYUAA",
+    "secrets": [
+      "sk-ant-api03-0fUqDxvvijJ14l0UEe8vLnAQpWGPQg8WsnA7mR-0dVGC1YfmrZ02eyRj7fsjMhorVIKgBoygao5sCK6oWak-SeIX59bYUAA"
+    ]
+  },
+  {
+    "id": "anthropic-yaml-pair",
+    "kind": "positive",
+    "family": "anthropic",
+    "text": "ANTHROPIC_API_KEY: sk-ant-api03-sznintjAmkJ73-fkap8uQms15TDqtC89qlwUkqQyqMo3S4pU1DPMouMJ3EURS-kalPSGE3XyYumPbaCWBd2zA-WQVsc25AA",
+    "secrets": [
+      "sk-ant-api03-sznintjAmkJ73-fkap8uQms15TDqtC89qlwUkqQyqMo3S4pU1DPMouMJ3EURS-kalPSGE3XyYumPbaCWBd2zA-WQVsc25AA"
+    ]
+  },
+  {
+    "id": "anthropic-prose",
+    "kind": "positive",
+    "family": "anthropic",
+    "text": "the key is sk-ant-api03-T768tWS1825bZSntcRwZW3f7cx-Kn2hqZzbMPNrZRTEq7S7UXsdTv4M4zNJ1lIT1hlBQ26IIwyPgSKAhks0mXvhny7-4OAA, please keep it private",
+    "secrets": [
+      "sk-ant-api03-T768tWS1825bZSntcRwZW3f7cx-Kn2hqZzbMPNrZRTEq7S7UXsdTv4M4zNJ1lIT1hlBQ26IIwyPgSKAhks0mXvhny7-4OAA"
+    ]
+  },
+  {
+    "id": "anthropic-bearer-header",
+    "kind": "positive",
+    "family": "anthropic",
+    "text": "curl -H \"Authorization: Bearer sk-ant-api03-9Lk5ZLKN92vnOZfO5kWzNvydY419nyFBA5PZbS5SEVSt14sHVFQGTNa-afsqhmu_SHecqwn4VrR3L4IJUxy1HxcQhOIvkAA\" https://api.example.test/v1/me",
+    "secrets": [
+      "sk-ant-api03-9Lk5ZLKN92vnOZfO5kWzNvydY419nyFBA5PZbS5SEVSt14sHVFQGTNa-afsqhmu_SHecqwn4VrR3L4IJUxy1HxcQhOIvkAA"
+    ]
+  },
+  {
+    "id": "anthropic-json-field",
+    "kind": "positive",
+    "family": "anthropic",
+    "text": "{\"anthropic_api_key\": \"sk-ant-api03-yXOz7x5l6zamoxEMK-wUUEnpFVJWSw_cjKi7yd7lWyLr98cvh0dKsTpdalEju5JosvRA5_PSrs05681HT123dtvoUkOeAAA\"}",
+    "secrets": [
+      "sk-ant-api03-yXOz7x5l6zamoxEMK-wUUEnpFVJWSw_cjKi7yd7lWyLr98cvh0dKsTpdalEju5JosvRA5_PSrs05681HT123dtvoUkOeAAA"
+    ]
+  },
+  {
+    "id": "aws-access-key-id-env-assignment",
+    "kind": "positive",
+    "family": "aws-access-key-id",
+    "text": "export AWS_ACCESS_KEY_ID=AKIA58NC1DPI24CGZQYQ",
+    "secrets": [
+      "AKIA58NC1DPI24CGZQYQ"
+    ]
+  },
+  {
+    "id": "aws-access-key-id-yaml-pair",
+    "kind": "positive",
+    "family": "aws-access-key-id",
+    "text": "AWS_ACCESS_KEY_ID: AKIAFF163J33TXGTCUX3",
+    "secrets": [
+      "AKIAFF163J33TXGTCUX3"
+    ]
+  },
+  {
+    "id": "aws-access-key-id-prose",
+    "kind": "positive",
+    "family": "aws-access-key-id",
+    "text": "the key is AKIACZDD5LG1J7L01FFF, please keep it private",
+    "secrets": [
+      "AKIACZDD5LG1J7L01FFF"
+    ]
+  },
+  {
+    "id": "aws-access-key-id-bearer-header",
+    "kind": "positive",
+    "family": "aws-access-key-id",
+    "text": "curl -H \"Authorization: Bearer AKIAVQDYGXTZWNFVMDBZ\" https://api.example.test/v1/me",
+    "secrets": [
+      "AKIAVQDYGXTZWNFVMDBZ"
+    ]
+  },
+  {
+    "id": "aws-access-key-id-json-field",
+    "kind": "positive",
+    "family": "aws-access-key-id",
+    "text": "{\"aws_access_key_id\": \"AKIA2Y2FA03YRGLKKUYW\"}",
+    "secrets": [
+      "AKIA2Y2FA03YRGLKKUYW"
+    ]
+  },
+  {
+    "id": "stripe-secret-env-assignment",
+    "kind": "positive",
+    "family": "stripe-secret",
+    "text": "export STRIPE_SECRET_KEY=sk_live_5KZkMYSgKqscUpUiQlvyzwPY",
+    "secrets": [
+      "sk_live_5KZkMYSgKqscUpUiQlvyzwPY"
+    ]
+  },
+  {
+    "id": "stripe-secret-yaml-pair",
+    "kind": "positive",
+    "family": "stripe-secret",
+    "text": "STRIPE_SECRET_KEY: sk_live_cksonmVK2c1vg7pEKMYF9NnD",
+    "secrets": [
+      "sk_live_cksonmVK2c1vg7pEKMYF9NnD"
+    ]
+  },
+  {
+    "id": "stripe-secret-prose",
+    "kind": "positive",
+    "family": "stripe-secret",
+    "text": "the key is sk_live_p5c13NVM1VTFPPVdfguEO1xv, please keep it private",
+    "secrets": [
+      "sk_live_p5c13NVM1VTFPPVdfguEO1xv"
+    ]
+  },
+  {
+    "id": "stripe-secret-bearer-header",
+    "kind": "positive",
+    "family": "stripe-secret",
+    "text": "curl -H \"Authorization: Bearer sk_live_NW1SIdH9C8JPLRmgs6lgZYUa\" https://api.example.test/v1/me",
+    "secrets": [
+      "sk_live_NW1SIdH9C8JPLRmgs6lgZYUa"
+    ]
+  },
+  {
+    "id": "stripe-secret-json-field",
+    "kind": "positive",
+    "family": "stripe-secret",
+    "text": "{\"stripe_secret_key\": \"sk_live_WYwX6Nhn2SDBsBrIheuDhVvd\"}",
+    "secrets": [
+      "sk_live_WYwX6Nhn2SDBsBrIheuDhVvd"
+    ]
+  },
+  {
+    "id": "neon-connection-url",
+    "kind": "positive",
+    "family": "neon",
+    "text": "postgresql://app_user:npg_iKeEY8EUJh6HRnij@ep-quiet-river-123456.eu-central-1.aws.neon.tech/app?sslmode=require",
+    "secrets": [
+      "npg_iKeEY8EUJh6HRnij"
+    ]
+  },
+  {
+    "id": "github-base64-wrapped",
+    "kind": "positive",
+    "family": "github-pat",
+    "text": "GH_TOKEN_B64=Z2hwX29aYW9HM2QxM21OeXlkZkI1Q0JocE1GYmxMNm84RzhHdnRiWQ==",
+    "secrets": [
+      "ghp_oZaoG3d13mNyydfB5CBhpMFblL6o8G8GvtbY"
+    ]
+  },
+  {
+    "id": "anthropic-url-encoded",
+    "kind": "positive",
+    "family": "anthropic",
+    "text": "ANTHROPIC_QUERY=sk%2Dant%2Dapi03%2DKx3ZwpFp%5FC7rwA9jeRpVxDaeKrsOEr%5FtZhdhjRS0dAi4W43IxrNPjicu50jqxVRmD7AHGAd%2DbZfTQoKOEGN2VRFiTzr4EAA",
+    "secrets": [
+      "sk-ant-api03-Kx3ZwpFp_C7rwA9jeRpVxDaeKrsOEr_tZhdhjRS0dAi4W43IxrNPjicu50jqxVRmD7AHGAd-bZfTQoKOEGN2VRFiTzr4EAA"
+    ]
+  },
+  {
+    "id": "git-log-sha",
+    "kind": "negative",
+    "family": null,
+    "gitContext": true,
+    "text": "git log --oneline\ncommit 3f6c2a9b8d1e4f7a0c5b6d9e2f1a8c7b4d3e6f09 (HEAD -> main)\nAuthor: developer",
+    "secrets": []
+  },
+  {
+    "id": "lockfile-integrity",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "\"integrity\": \"sha512-CQ0eHIpRK0ssukdKsS41Plh9RY/xEMWtxa6jxH9zqkm9Fj/Y/gtElk1VjnA3ICOmIGIzfHTskfV86tQbfWLU2l==\"",
+    "secrets": []
+  },
+  {
+    "id": "file-path",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "/home/user/projects/secret-gateway/src/detect.ts",
+    "secrets": []
+  },
+  {
+    "id": "package-version",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "\"@types/node\": \"24.0.0\", \"typescript\": \"5.9.2\"",
+    "secrets": []
+  },
+  {
+    "id": "prose",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "Please review the pull request and rerun the tests before merging the branch.",
+    "secrets": []
+  },
+  {
+    "id": "css-color",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "color: #1d1d1f; background: #ffffff;",
+    "secrets": []
+  },
+  {
+    "id": "identifier",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "internationalizationResolverFactoryBuilderAdapter",
+    "secrets": []
+  },
+  {
+    "id": "url-no-secret",
+    "kind": "negative",
+    "family": null,
+    "gitContext": false,
+    "text": "https://docs.example.test/guides/getting-started/installation",
+    "secrets": []
+  }
+]

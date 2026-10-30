@@ -2,3 +2,5 @@ node_modules/
 .worktrees/
 .env
 .env.*
+.tools/
+__pycache__/
