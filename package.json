@@ -6,10 +6,5 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/main.ts"
-  },
-  "dependencies": {
-    "@tesseract.js-data/eng": "1.0.0",
-    "sharp": "0.35.5",
-    "tesseract.js": "7.0.0"
   }
 }

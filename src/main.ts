@@ -1,12 +1,10 @@
-// Composition root: wires configuration, identity, answers store, scanner, screenshot engine,
-// masking core, review surface and notifications, then starts the HTTP boundary.
+// Composition root: wires configuration, identity, answers store, scanner, masking core, review
+// surface and notifications, then starts the HTTP boundary.
 import { join } from 'node:path';
 import { loadConfig } from './config.ts';
 import { loadIdentityKey } from './identity.ts';
 import { AnswerStore } from './store.ts';
 import { ExternalScanner, providerScanner } from './scanner.ts';
-import { ScreenshotEngine } from './images.ts';
-import { createOcrEngine, createRaster } from './screenshot-backends.ts';
 import { Masker } from './masker.ts';
 import { ReviewSurface } from './review.ts';
 import { ManualClock, NotifySendNotifier, RecordingNotifier, ReviewNotifier, SystemClock } from './notify.ts';
@@ -28,20 +26,10 @@ const notifier = new ReviewNotifier({
   reviewUrl: review.url,
   onAction: (id, action) => review.answer(id, action),
 });
-const images = new ScreenshotEngine({
-  key,
-  scanner,
-  ocr: createOcrEngine(),
-  raster: createRaster(),
-  log,
-  onWindowDegraded: (window) =>
-    notifier.alert('Screen reading degraded', `OCR failed three times in a row for ${window}. Screenshots are withheld.`),
-});
 const masker = new Masker({
   key,
   store,
   scanner,
-  images,
   now,
   onPending: (item) => notifier.enqueue(item),
   collectSlots,

@@ -124,11 +124,6 @@ export class ReviewNotifier {
     this.#options.clock.setTimer(this.#batchMs, () => this.#flush());
   }
 
-  // Degraded-screen alert: not per item, and not batched.
-  alert(title: string, body: string): void {
-    this.#options.notifier.send({ title, body, actions: [] }, () => undefined);
-  }
-
   #flush(): void {
     this.#scheduled = false;
     const now = this.#options.clock.now();

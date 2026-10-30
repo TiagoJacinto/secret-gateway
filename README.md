@@ -1,6 +1,6 @@
 # secret-gateway
 
-A local gateway between Claude Code and the Anthropic Messages API. It masks secrets in everything sent to the model, restores placeholders in tool calls, and lets you review masked values without blocking the agent.
+A local gateway between Claude Code and the Anthropic Messages API. It masks secrets in the text sent to the model, restores placeholders in tool calls, and lets you review masked values without blocking the agent.
 
 Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
 
@@ -9,21 +9,15 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 - Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
-- Masks secrets in screenshots by reading them with local OCR and painting a labelled black box over each one.
+- Does not mask screenshots. Images pass through unchanged. See Limits.
 - Holds every new detection masked until you answer it on a local review page. Answers are remembered by identity.
-- Refuses a request rather than sending it raw when masking, OCR or the upstream fails.
+- Refuses a request rather than sending it raw when masking or the upstream fails.
 
 ## Setup
 
 Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscription (`claude auth status` should show `loggedIn: true`). No API key is needed.
 
-1. Install project dependencies. The versions are pinned in `package.json`.
-
-   ```sh
-   bun install
-   ```
-
-2. Install the provider scanner into `.tools/bin` (gitignored). The version is Betterleaks 1.9.0 and the archive checksum is `f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7`.
+1. Install the provider scanner into `.tools/bin` (gitignored). The version is Betterleaks 1.9.0 and the archive checksum is `f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7`.
 
    ```sh
    mkdir -p .tools/bin
@@ -33,14 +27,7 @@ Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscript
    .tools/bin/betterleaks version
    ```
 
-   The OCR language data comes from the `@tesseract.js-data/eng` package, so nothing is downloaded at run time. Screenshot OCR needs no system package.
-
-3. Optional, for the OCR benchmark only: a project-local RapidOCR environment.
-
-   ```sh
-   python3 -m venv .tools/rapidocr-venv
-   .tools/rapidocr-venv/bin/pip install rapidocr==3.10.0 onnxruntime==1.31.0
-   ```
+2. The gateway has no npm dependencies. Bun runs it directly, so there is no install step.
 
 ## Run
 
@@ -61,7 +48,7 @@ Add this alias to your own shell configuration. This repository does not install
 alias claude-masked='ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude'
 ```
 
-Then start a session with `claude-masked`. The alias only sets the base URL. If the gateway is not running, the alias gives no fallback, so requests fail. This was checked from the configuration only; it was not tested live.
+Then start a session with `claude-masked`. The alias only sets the base URL. If the gateway is not running, the alias gives no fallback, so requests fail. One live run with the gateway down gave no reply. That run does not show whether Claude Code tried a direct connection (see the verification README).
 
 ## Review detections
 
@@ -77,16 +64,15 @@ The page only answers requests from the page itself. Desktop notifications are s
 ```sh
 python3 .agents/verification/scripts/check.py
 bun run bench/scanner.ts
-bun run bench/ocr.ts
 ```
 
-These run the HTTP-boundary journeys, the scanner benchmark and the OCR benchmark. The commands and results are in [.agents/verification/README.md](.agents/verification/README.md).
+These run the HTTP-boundary journeys and the scanner benchmark. The commands and results are in [.agents/verification/README.md](.agents/verification/README.md).
 
 ## Limits
 
-- **OCR exact reads are not met.** Tesseract reads 2 of 7 fixture keys exactly. RapidOCR reads 4 of 7 and gives line boxes only. Misread keys are still painted, but a placeholder for a misread key restores a wrong value. Use the Copy button and paste rather than reading values from screenshots.
+- **Screenshots are not masked.** Images pass through to Anthropic unchanged, so a secret visible in a screenshot reaches the provider. The image also stays in the conversation history. Expected from the Messages API, later requests resend it; this was not checked live. Prefer text sources. Rotate any key that appeared in a screenshot.
 - Desktop notification buttons need an AppArmor change to `notify-send` on this machine. Not changed. Notifications are plain, and the review page answers.
 - Scanner-alone recall is low for Cloudflare, Neon, Google and AWS formats. The name and entropy layers cover them in the full pipeline.
 - Thinking blocks are not changed. Tool definitions are not scanned. Document blocks and URL images are withheld, not scanned.
-- Not covered: Codex or other agents, a trained visual detector, hosted use, multiple users, and live validation with providers.
+- Not covered: Codex or other agents, hosted use, multiple users, and live validation with providers.
 - Claude Code's own transcripts keep real values, as they did before.

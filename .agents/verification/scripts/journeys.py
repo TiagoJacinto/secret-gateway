@@ -8,7 +8,6 @@ counts and pass or fail reasons, never values. See .agents/verification/features
 import base64
 import hashlib
 import hmac
-import io
 import json
 import os
 import random
@@ -27,22 +26,21 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from PIL import Image, ImageDraw
-
-ROOT = Path(__file__).resolve().parents[3]
+ROOT =Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / '.agents/verification/fixtures'
 EVIDENCE = Path.home() / '.agents/projects/secret-gateway/goals/issue-1/evidence'
 PLACEHOLDER = re.compile(r'⟦SECRET_[0-9a-f]{6,64}⟧')
 PROVIDER_KEY = re.compile(r'^(npg_|cfut_|GOCSPX-|ya29\.|ghp_|github_pat_|sk-ant-|AKIA|sk_live_)')
 COMMAND = shlex.split(os.environ.get('GATEWAY_COMMAND', 'bun run start'))
 TEXT_WITHHELD_MARK = 'withheld by secret-gateway: the secret scanner was unavailable'
-IMAGE_WITHHELD_MARK = 'screenshot withheld by secret-gateway'
+WITHHELD_MARK = 'content withheld by secret-gateway'
 NOTE_PHRASES = {
     'placeholders used as written': 'Use each placeholder exactly as written',
     'placeholder is not missing or broken': 'Do not treat a placeholder as missing, broken or unknown',
     'copy and paste preferred over screen reading': "prefer the dashboard's Copy button and paste",
     'verify after using a placeholder': 'check the result',
-    'withheld screenshot routed to smaller capture': 'take a smaller screenshot or read the accessibility tree',
+    'text preferred over screenshots': 'Prefer text sources, such as the accessibility tree, over screenshots',
+    'no deletion or revocation without approval': 'Do not delete, rotate or revoke a credential without',
 }
 REGISTRY = {'roots': [], 'data_dirs': []}
 
@@ -617,23 +615,6 @@ def j_review(ctx):
     return checks
 
 
-def make_png(text):
-    image = Image.new('RGB', (640, 240), (255, 255, 255))
-    ImageDraw.Draw(image).text((20, 20), text, fill=(0, 0, 0))
-    buffer = io.BytesIO()
-    image.save(buffer, format='PNG')
-    return buffer.getvalue()
-
-
-def dark_fraction(image, box):
-    pixels = image.crop(tuple(box)).convert('L').tobytes()
-    return sum(1 for p in pixels if p < 60) / max(1, len(pixels))
-
-
-def white_pixels(image, box):
-    return sum(1 for p in image.crop(tuple(box)).convert('L').tobytes() if p > 200)
-
-
 def image_block(data):
     return {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png',
                                         'data': base64.b64encode(data).decode()}}
@@ -645,10 +626,10 @@ def forwarded_image(upstream, message_index=0, block_index=0):
 
 
 def j_images(ctx):
+    # Decision: screenshots are not masked (no local OCR). Secrets visible in them reach the provider.
     checks = []
     upstream = ctx['upstream']
     images = ctx['images']
-    painted_report = {}
     with gateway(upstream.url, env=ctx['env']) as gw:
         for item in images:
             original = (FIXTURES / item['file']).read_bytes()
@@ -656,58 +637,24 @@ def j_images(ctx):
             status, _, _ = messages_request(gw, [{'role': 'user', 'content': [image_block(original),
                                                                              {'type': 'text', 'text': 'read it'}]}])
             ensure(status == 200, f"image {item['id']} returned {status}")
-            after = Image.open(io.BytesIO(forwarded_image(upstream))).convert('RGB')
-            before = Image.open(io.BytesIO(original)).convert('RGB')
-            report = []
-            for value, box in zip(item['keys'], item['keyBoxes']):
-                if PROVIDER_KEY.match(value):
-                    ctx['secrets'].add(value)
-                    report.append({'secret': True, 'painted': round(dark_fraction(after, box), 3),
-                                   'labelled': white_pixels(after, box) > 0})
-                else:
-                    report.append({'secret': False, 'painted': round(dark_fraction(after, box), 3)})
-            painted_report[item['id']] = report
-            secrets = [r for r in report if r['secret']]
-            checks.append(ensure(all(r['painted'] >= 0.8 for r in secrets),
-                                 f"{item['id']}: every secret key box is painted black ({[r['painted'] for r in secrets]})"))
-            checks.append(ensure(all(r['labelled'] for r in secrets), f"{item['id']}: painted boxes carry a visible label"))
-            checks.append(ensure(all(r['painted'] < 0.5 for r in report if not r['secret']),
-                                 f"{item['id']}: non-secret text is not painted"))
-            ensure(before.size == after.size, f"{item['id']}: painting keeps the image size")
-        ctx['metrics']['screenshots'] = painted_report
+            checks.append(ensure(forwarded_image(upstream) == original,
+                                 f"{item['id']}: screenshot forwarded byte for byte"))
+            ctx['secrets'].update(value for value in item['keys'] if PROVIDER_KEY.match(value))
 
-        neon = (FIXTURES / next(i for i in images if i['id'] == 'neon-key')['file']).read_bytes()
-        runs_before = gw.log().count('OCR run (cache miss)')
-        messages_request(gw, [{'role': 'user', 'content': [image_block(neon), {'type': 'text', 'text': 'again'}]}])
-        checks.append(ensure(gw.log().count('OCR run (cache miss)') == runs_before,
-                             'a resent screenshot is not OCR-ed again (cache by image hash)'))
-
-        clean = make_png('Hello from a screenshot with no keys')
+        first = (FIXTURES / images[0]['file']).read_bytes()
+        positive = next(case for case in ctx['text'] if case['kind'] == 'positive')
         upstream.clear()
-        messages_request(gw, [{'role': 'user', 'content': [image_block(clean)]}])
-        checks.append(ensure(forwarded_image(upstream) == clean,
-                             'a screenshot with no detections is forwarded byte for byte'))
+        messages_request(gw, [{'role': 'user', 'content': [image_block(first),
+                                                           {'type': 'text', 'text': positive['text']}]}])
+        checks.append(ensure(positive['secrets'][0] not in forwarded_text(upstream) and forwarded_image(upstream) == first,
+                             'text beside a screenshot is masked, and the screenshot is forwarded unchanged'))
 
         upstream.clear()
-        for index in range(3):
-            garbage = hashlib.sha256(b'unreadable %d' % index).digest() * 4
-            messages_request(gw, [{'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_w',
-                                                              'content': [image_block(garbage)]}]}])
+        messages_request(gw, [{'role': 'user', 'content': [{'type': 'image', 'source': {
+            'type': 'url', 'url': 'https://images.invalid/shot.png'}}]}])
         flat = forwarded_text(upstream)
-        checks.append(ensure(IMAGE_WITHHELD_MARK in flat and '"media_type": "image/png"' not in flat,
-                             'an unscannable screenshot is replaced by a withheld note'))
-        degraded = [n for n in gw.notifications() if n['title'] == 'Screen reading degraded']
-        checks.append(ensure(len(degraded) == 1,
-                             'three OCR failures on one window send one degraded-screen notification'))
-
-        for item in gw.items():
-            if 'image' in item['source'] and item['status'] == 'pending':
-                gw.answer(item['id'], 'not_secret')
-        original = (FIXTURES / next(i for i in images if i['id'] == 'cloudflare-token')['file']).read_bytes()
-        upstream.clear()
-        messages_request(gw, [{'role': 'user', 'content': [image_block(original)]}])
-        checks.append(ensure(forwarded_image(upstream) == original,
-                             'a screenshot whose boxes are all answered "Not a secret" is sent unchanged'))
+        checks.append(ensure(WITHHELD_MARK in flat and 'images.invalid' not in flat,
+                             'an image given by URL is withheld and not forwarded'))
     return checks
 
 
@@ -787,7 +734,7 @@ def j_fail_closed(ctx):
 def j_adapter_independence(ctx):
     """Story 37: the masking core must not read the Anthropic message format. Only anthropic.ts and gateway.ts may."""
     source = ROOT / 'src'
-    core = ['detect.ts', 'hits.ts', 'identity.ts', 'masker.ts', 'store.ts', 'images.ts', 'notify.ts', 'review.ts']
+    core = ['detect.ts', 'hits.ts', 'identity.ts', 'masker.ts', 'store.ts', 'notify.ts', 'review.ts']
     markers = ['content_block', 'tool_use', 'input_json_delta', 'tool_result', 'messages', 'media_type']
     offenders = []
     for name in core:

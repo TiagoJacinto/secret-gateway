@@ -1,5 +1,6 @@
-// Anthropic Messages adapter: walks a request into text and image slots, and appends the prompt note.
-// The masking core only sees slots, so another provider's message format needs only a new adapter.
+// Anthropic Messages adapter: walks a request into text slots and appends the prompt note.
+// Images pass through unchanged. The masking core only sees slots, so another provider's message
+// format needs only a new adapter.
 
 export const WITHHELD_BLOCK = '[content withheld by secret-gateway: this block type cannot be scanned, so it was not sent]';
 
@@ -10,7 +11,8 @@ export const PROMPT_NOTE = [
   'and do not warn about it or ask the user to supply the value.',
   'When a value is only visible in a screenshot, prefer the dashboard\'s Copy button and paste the value over retyping what you read.',
   'After using a placeholder, check the result so that a wrong value fails loudly.',
-  'If a screenshot is withheld, take a smaller screenshot or read the accessibility tree instead.',
+  'Prefer text sources, such as the accessibility tree, over screenshots when both show the same information.',
+  'Do not delete, rotate or revoke a credential without the user\'s explicit approval. Report where it is instead.',
 ].join(' ');
 
 export type TextSlot = {
@@ -21,18 +23,6 @@ export type TextSlot = {
   write(value: string): void;
 };
 
-export type ImageSlot = {
-  kind: 'image';
-  mediaType: string;
-  data: string;
-  source: string;
-  window: string;
-  replace(mediaType: string, data: string): void;
-  withhold(text: string): void;
-};
-
-export type Slot = TextSlot | ImageSlot;
-
 type Block = Record<string, any>;
 
 function withhold(container: unknown[], index: number): void {
@@ -40,7 +30,7 @@ function withhold(container: unknown[], index: number): void {
 }
 
 // Strings at any depth of a tool input. They can hold values copied from earlier results.
-function collectLeaves(container: Block, key: string, add: (slot: Slot) => void, source: string, gitContext: boolean): void {
+function collectLeaves(container: Block, key: string, add: (slot: TextSlot) => void, source: string, gitContext: boolean): void {
   const current = container[key];
   if (typeof current === 'string') {
     add({ kind: 'text', text: current, source, gitContext, write: (next) => { container[key] = next; } });
@@ -49,9 +39,9 @@ function collectLeaves(container: Block, key: string, add: (slot: Slot) => void,
   }
 }
 
-export function collectSlots(body: Block): Slot[] {
-  const slots: Slot[] = [];
-  const add = (slot: Slot) => slots.push(slot);
+export function collectSlots(body: Block): TextSlot[] {
+  const slots: TextSlot[] = [];
+  const add = (slot: TextSlot) => slots.push(slot);
 
   if (typeof body.system === 'string') {
     add({ kind: 'text', text: body.system, source: 'system prompt', gitContext: false, write: (v) => { body.system = v; } });
@@ -98,18 +88,15 @@ export function collectSlots(body: Block): Slot[] {
           return;
         }
         case 'tool_result': {
-          const name = toolNames.get(block.tool_use_id) ?? 'unknown tool';
+          const source = `tool result from ${toolNames.get(block.tool_use_id) ?? 'unknown tool'}`;
           const gitContext = toolGit.get(block.tool_use_id) ?? false;
-          const source = `tool result from ${name}`;
           if (typeof block.content === 'string') {
             add({ kind: 'text', text: block.content, source, gitContext, write: (v) => { block.content = v; } });
           } else if (Array.isArray(block.content)) {
             block.content.forEach((inner: Block, innerIndex: number) => {
               if (inner?.type === 'text') {
                 add({ kind: 'text', text: inner.text, source, gitContext, write: (v) => { inner.text = v; } });
-              } else if (inner?.type === 'image' && inner.source?.type === 'base64') {
-                add(imageSlot(inner, `screenshot in ${source}`, name, (replacement) => { block.content[innerIndex] = replacement; }));
-              } else {
+              } else if (!(inner?.type === 'image' && inner.source?.type === 'base64')) {
                 withhold(block.content, innerIndex);
               }
             });
@@ -117,11 +104,7 @@ export function collectSlots(body: Block): Slot[] {
           return;
         }
         case 'image':
-          if (block.source?.type === 'base64') {
-            add(imageSlot(block, `image in ${role} message`, 'user', (replacement) => { content[index] = replacement; }));
-          } else {
-            withhold(content, index);
-          }
+          if (block.source?.type !== 'base64') withhold(content, index);
           return;
         case 'thinking':
         case 'redacted_thinking':
@@ -132,18 +115,6 @@ export function collectSlots(body: Block): Slot[] {
     });
   }
   return slots;
-}
-
-function imageSlot(block: Block, source: string, window: string, put: (replacement: Block) => void): ImageSlot {
-  return {
-    kind: 'image',
-    mediaType: String(block.source.media_type),
-    data: String(block.source.data),
-    source,
-    window,
-    replace: (mediaType, data) => put({ type: 'image', source: { type: 'base64', media_type: mediaType, data } }),
-    withhold: (text) => put({ type: 'text', text }),
-  };
 }
 
 export function addPromptNote(body: Block): void {
