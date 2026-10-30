@@ -82,13 +82,46 @@ python3 .agents/verification/scripts/gateway_down_probe.py
 
 Runs `claude -p` (Haiku 5.5, medium effort, synthetic prompt) with `ANTHROPIC_BASE_URL` set to a loopback port where nothing listens. It passes when Claude Code gives no reply and the marker is absent. It records the exit code, error flags and whether the marker appeared. It does not record the request path, reply text or stderr, so a direct connection attempt would not show. Evidence: `~/.agents/projects/secret-gateway/goals/issue-1/evidence/gateway-down.json`. Approved 2026-10-30 as one run. Do not run it again without approval.
 
+## Gateway-down connect check (approved, live, run once: FAIL)
+
+```sh
+python3 .agents/verification/scripts/gateway_down_connect_probe.py
+```
+
+Runs the same `claude -p` under `strace -f -e trace=connect`. It records only connect() destinations (address and port), never request or reply content. It passes only when there is no reply, the base URL was tried, and no remote port-443 connect() was attempted. Evidence: `~/.agents/projects/secret-gateway/goals/issue-1/evidence/gateway-down-connect.json`.
+
+Result on 2026-10-30 (plain alias): FAIL. Claude Code tried the closed base URL, then `160.79.104.10:443` (an address `api.anthropic.com` resolves to), and other remote port-443 addresses. No reply, and no model was used. The trace does not show whether a request body was sent.
+
+## Gateway-down proxy variant (approved, live, run once: PASS)
+
+```sh
+python3 .agents/verification/scripts/gateway_down_connect_probe.py --proxy
+```
+
+Same check, with `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and `NODE_USE_ENV_PROXY=1` set as in the README alias. The proxy is a second closed loopback port. Evidence: `evidence/gateway-down-connect-proxy.json`.
+
+Result on 2026-10-30: PASS. Claude Code tried the proxy, made no remote connection, and gave no reply; no model was used. One run only. The gateway-running case is the next section. Do not run it again without approval.
+
+## Gateway-up alias check (approved, live, run once: PASS)
+
+```sh
+python3 .agents/verification/scripts/gateway_up_alias_probe.py
+```
+
+Starts the real gateway with a recording forwarder as its upstream. Runs `claude -p` under strace with the README alias environment. The prompt holds a synthetic fake key. The forwarder records booleans and statuses only, and refuses to forward a request that still holds the fake key. Evidence: `evidence/gateway-up-alias.json`.
+
+Result on 2026-10-30: PASS. The reply carried the marker. One Messages request reached the upstream with a placeholder and without the fake key, and returned 200. Claude Code made no remote connect(). One request went to the closed proxy port and failed; the reply still worked. One run only. Do not run it again without approval.
+
 ## Results (2026-10-30)
 
 | Check | Result |
 | --- | --- |
 | `check.py` (smoke and 13 journeys) | PASS |
 | Subscription authentication probe | PASS (base URL honoured; Bearer forwarded; 200; PROBE-OK on claude-haiku-5-5) |
-| Gateway-down check (closed port, one run) | PASS as defined: exit 1, no reply, no model used. Does not show the request path |
+| Gateway-down check, no trace (one run) | No reply, no model used. Shows no connects, so it is not a pass for story 2 |
+| Gateway-down connect check, strace, plain alias (one run) | FAIL: connect() to the API host's address with the gateway down. Request body not shown |
+| Gateway-down connect check, strace, proxy variant (one run) | PASS: proxy tried, no remote connect, no reply |
+| Gateway-up alias check, strace, proxy variant (one run) | PASS: masked Messages request reached the upstream with a placeholder and returned 200; reply with marker; no remote connect |
 | Scanner benchmark | Betterleaks provider rules: pipeline recall 47/48; scanner-alone recall 0.521; p95 86 ms (pass). All-rules Betterleaks p95 319 ms (fails). Kingfisher p95 718 ms (fails) |
 | Local OCR (removed) | Not used. Last results kept as history in `evidence/ocr-benchmark.json`: Tesseract 2/7 exact keys, RapidOCR 4/7 |
 
@@ -97,7 +130,7 @@ Runs `claude -p` (Haiku 5.5, medium effort, synthetic prompt) with `ANTHROPIC_BA
 - **Screenshots are not masked (decision, 2026-10-30).** A secret visible in a screenshot reaches the provider. The image also stays in the conversation history. Expected from the Messages API, later requests resend it; this is not verified live.
 - Scanner-alone recall for Cloudflare, Neon, Google and AWS formats is low. Coverage for those comes from the name and entropy layers in the pipeline. The Google `ya29.` prefix is outside the token charset, so only its random tail is masked.
 - Desktop notification buttons do not appear on this machine. AppArmor profile `/etc/apparmor.d/notify-send` blocks `GetCapabilities`. Notifications are sent as plain notifications, and the recording notifier verifies the action list only. The review page is the working answer path.
-- Gateway-down behaviour: one live run with a closed port gave no reply (see the gateway-down check). That run does not show the request path, so a direct connection attempt would not be seen.
+- **Gateway down, plain alias: Claude Code attempts a direct connection to the API host** (strace check, 2026-10-30). It is not known whether a request body was sent. The README alias adds proxy settings. With them, one gateway-down run made no remote connection, and one gateway-running run gave a masked reply. Each is one run. Other HTTPS traffic from Claude Code goes to the closed proxy and fails. Not tested: features that need other HTTPS hosts.
 - Thinking blocks are not scanned or changed, since the model only saw placeholders. Tool definitions are not scanned.
 - Unsupported content blocks (documents, URL images, other types) are withheld, not scanned.
 - Benchmarks and journeys do not measure the desktop UI, Claude Code itself beyond the probe, or the Codex adapter (out of scope).
@@ -108,8 +141,8 @@ Decided by the user (2026-10-30):
 
 1. Screenshots pass through unmasked. Local OCR was removed from the code. Reverse this by restoring the OCR path from commit `7b37f2c`.
 
-2. Notification buttons: plain notifications with the review link. The AppArmor profile for `notify-send` is unchanged, so buttons do not appear. Story 27 is not met.
-3. Gateway-down test (story 2): approved and run once. See the gateway-down check above. Result: no reply; the request path is not shown.
+2. Notification buttons: plain notifications with the review link. The AppArmor profile for `notify-send` is unchanged, so buttons do not appear. Story 27 is not met; the user accepted this on 2026-10-30.
+3. Gateway-down test (story 2): approved. The plain alias failed the strace check. The proxy variant passed the gateway-down check, and the gateway-running alias check passed. The README alias uses the variant. Story 2 is recorded as met by the variant, one run each; the limits are in the gaps list.
 4. Scanner: provider rules (pipeline p95 86 ms, within the 200 ms limit). All rules (p95 303 ms) is not used.
 
 Open for the user:

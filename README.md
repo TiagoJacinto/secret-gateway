@@ -45,10 +45,10 @@ It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page 
 Add this alias to your own shell configuration. This repository does not install it:
 
 ```sh
-alias claude-masked='ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude'
+alias claude-masked='ANTHROPIC_BASE_URL=http://127.0.0.1:8787 HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 NO_PROXY=127.0.0.1,localhost NODE_USE_ENV_PROXY=1 claude'
 ```
 
-Then start a session with `claude-masked`. The alias only sets the base URL. If the gateway is not running, the alias gives no fallback, so requests fail. One live run with the gateway down gave no reply. That run does not show whether Claude Code tried a direct connection (see the verification README).
+Then start a session with `claude-masked`. The base URL sends requests to the gateway. The proxy settings send any other connection to port 9, where nothing should listen, so a direct connection to the API fails. Port 9 must have nothing listening on this machine. In one live check on 2026-10-30, this alias gave a masked reply with the gateway running. With the gateway down, it made no remote connection. The alias without the proxy settings did connect to the API host (see Limits).
 
 ## Review detections
 
@@ -70,8 +70,9 @@ These run the HTTP-boundary journeys and the scanner benchmark. The commands and
 
 ## Limits
 
+- **Without the proxy settings, Claude Code connects to the API host when the gateway is down.** In one live check on 2026-10-30, the alias without proxy settings made a connection attempt to the API host with the gateway down. The trace does not show whether a request body was sent. The alias in Setup adds the proxy settings. Its gateway-down run made no remote connection. Its gateway-running run gave a masked reply. Each is one run. Claude Code's other HTTPS traffic (for example web fetch or MCP servers) goes to the closed proxy and fails. Not tested: those features. Keep the gateway running whenever you use the alias.
 - **Screenshots are not masked.** Images pass through to Anthropic unchanged, so a secret visible in a screenshot reaches the provider. The image also stays in the conversation history. Expected from the Messages API, later requests resend it; this was not checked live. Prefer text sources. Rotate any key that appeared in a screenshot.
-- Desktop notification buttons need an AppArmor change to `notify-send` on this machine. Not changed. Notifications are plain, and the review page answers.
+- Desktop notification buttons need an AppArmor change to `notify-send` on this machine. Not changed. Notifications are plain, and the review page answers. Story 27 (buttons) is not met; you accepted this on 2026-10-30.
 - Scanner-alone recall is low for Cloudflare, Neon, Google and AWS formats. The name and entropy layers cover them in the full pipeline.
 - Thinking blocks are not changed. Tool definitions are not scanned. Document blocks and URL images are withheld, not scanned.
 - Not covered: Codex or other agents, hosted use, multiple users, and live validation with providers.
