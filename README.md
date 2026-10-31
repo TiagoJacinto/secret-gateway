@@ -9,6 +9,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 - Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
+- Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again.
 - Does not mask screenshots. Images pass through unchanged. See Limits.
 - Holds every new detection masked until you answer it on a local review page. Answers are remembered by identity.
 - Refuses a request rather than sending it raw when masking or the upstream fails.
@@ -38,7 +39,7 @@ cd /path/to/secret-gateway
 bun run start
 ```
 
-It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, data in `~/.local/share/secret-gateway` (`identity.key` with mode 0600, `answers.sqlite`). Change them with environment variables, and see the verification README for the full list.
+It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. The same lines go to `gateway.log` in the data directory (mode 0600), When the file passes 10 MB, the gateway moves it to `gateway.log.1` (replacing the previous `.1`) and starts a new one. Each proxied request has one line, for example `POST /v1/messages 200 412ms masked=1 session=3f9a1c2e`. Each new detection (`pending <identity prefix> from <source> (length N)`) and each review answer (`review answer <identity prefix> <status>`) has one line too. Lines hold counts and 8-character identity or session prefixes, never values or message text. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, data in `~/.local/share/secret-gateway` (`identity.key` with mode 0600, `answers.sqlite`). Change them with environment variables, and see the verification README for the full list.
 
 ## Use Claude Code through the gateway
 
@@ -52,10 +53,12 @@ Then start a session with `claude-masked`. The base URL sends requests to the ga
 
 ## Review detections
 
-Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`) and length. It never shows a value.
+Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`) and length. The page itself never shows a value.
+
+- **Show value** opens a new page that lists each appearance of the value in the session, labelled with its place (for example `user message text, message 3`). Each appearance shows its line with the value highlighted, the nearest non-empty line above and below it, and the empty lines between. Other masked values in those lines show as placeholders. The page needs the review token, which the review page includes, so only a page from this gateway can open it. The line and value are held in memory only. They are never written to disk, and a restart removes them. Rows from before a restart show "value not in memory".
 
 - **Secret** keeps the value masked.
-- **Not a secret** unmasks the value from the next request onward, across the whole history. Expect a cost spike in prompt caching when you do this.
+- **Not a secret** unmasks the value only in messages that each conversation sends after your answer. Messages sent before it keep their placeholders, so their prompt cache is not rewritten. A conversation is the Claude Code session header plus the system prompt, so a side request with its own system prompt has its own record. The record is kept in the answers database, so a restart does not change it. A conversation that starts after your answer has no earlier messages, so the value is unmasked from its first message.
 
 The page only answers requests from the page itself. Desktop notifications are sent with a link to this page. On this machine, their buttons do not appear (see Limits).
 

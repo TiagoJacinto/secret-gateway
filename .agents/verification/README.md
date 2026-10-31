@@ -40,14 +40,14 @@ Test-only settings, which the journeys use. Do not set them for real use:
 
 | Journey (`scripts/journeys.py`) | Checks |
 | --- | --- |
-| `streaming` | Raw secret absent upstream; tool input restored across 5-character fragments; text blocks not restored; event sequence unchanged |
-| `non-streaming` | Tool input restored for the client; text block not restored |
+| `streaming` | Raw secret absent upstream; tool input restored across 5-character fragments; streamed text blocks link each placeholder to its review page; event sequence unchanged apart from the restored tool input and text links |
+| `non-streaming` | Tool input restored for the client; text block links the placeholder to its review page |
 | `prompt-note` | Original system prompt kept; note covers placeholder use, no "missing" warnings, Copy-and-paste preference, verification, text over screenshots, no deletion or revocation without approval; note added without a system prompt |
 | `detection-fixtures` | Every positive fixture (48) masked at the HTTP boundary; every negative (8) forwarded unchanged; git SHA exempt only in git output |
 | `canonical-forms` | Plain, quoted and padded, percent-encoded, and base64 copies share one placeholder |
 | `exemptions-and-formats` | UUID, JWT, base64 blob, and unknown random token masked; tool-use and tool-result history masked; gateway placeholders not re-masked; git SHA exempt |
 | `identity-restart` | Placeholder stable across restart; identity key mode 0600 and data directory mode 0700; deleted key gives a new identity and asks again |
-| `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks in history; "Secret" stays masked; answers persist across restart; review identities match HMAC of the values under the key file |
+| `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal reports the value is not in memory; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |
 | `images` | Five screenshots forwarded byte for byte (not masked, by decision); text beside a screenshot still masked; an image given by URL is withheld and not forwarded |
 | `notifications` | Nothing before the 10 s batch window; batch of five gives three item notifications and one summary; item notifications carry Secret and Not a secret actions; rate limit of three per minute; budget returns after a minute; notifications contain no values |
 | `fail-closed` | Upstream unreachable gives 502 without a raw value; scanner missing withholds text; invalid JSON and non-JSON message requests refused; non-loopback HOST refuses to start |

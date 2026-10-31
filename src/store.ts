@@ -1,5 +1,6 @@
 // Answers store: one row per secret identity. Holds status, source description, length and
-// timestamps. It never holds a secret value.
+// timestamps. It also holds, per conversation, the message count of its last request and the unmask
+// points of "Not a secret" answers. It never holds a secret value: conversation keys are digests.
 import { Database } from 'bun:sqlite';
 import { chmodSync, existsSync } from 'node:fs';
 
@@ -20,6 +21,16 @@ export class AnswerStore {
         length INTEGER NOT NULL,
         first_seen TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS conversations (
+        key TEXT PRIMARY KEY,
+        count INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS unmask_points (
+        identity TEXT NOT NULL,
+        conversation TEXT NOT NULL,
+        first_order INTEGER NOT NULL,
+        PRIMARY KEY (identity, conversation)
       );
     `);
     for (const file of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(file)) chmodSync(file, 0o600);
@@ -43,6 +54,35 @@ export class AnswerStore {
       .query('UPDATE items SET status = ?, updated_at = ? WHERE id = ?')
       .run(status, now, id);
     return result.changes === 1;
+  }
+
+  // Message count of the last request of a conversation.
+  recordConversation(key: string, count: number): void {
+    this.#db
+      .query('INSERT INTO conversations (key, count) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET count = excluded.count')
+      .run(key, count);
+  }
+
+  conversationCounts(): Map<string, number> {
+    const rows = this.#db.query<{ key: string; count: number }, []>('SELECT key, count FROM conversations').all();
+    return new Map(rows.map((row) => [row.key, row.count]));
+  }
+
+  // Replaces the unmask points of one identity: per conversation, the first slot order that is unmasked.
+  setUnmaskPoints(id: string, points: Map<string, number>): void {
+    this.#db.transaction(() => {
+      this.#db.query('DELETE FROM unmask_points WHERE identity = ?').run(id);
+      const insert = this.#db.query('INSERT INTO unmask_points (identity, conversation, first_order) VALUES (?, ?, ?)');
+      for (const [conversation, order] of points) insert.run(id, conversation, order);
+    })();
+  }
+
+  // Zero when the identity has no unmask point in that conversation, so every slot stays unmasked.
+  unmaskPoint(id: string, conversation: string): number {
+    const row = this.#db
+      .query<{ first_order: number }, [string, string]>('SELECT first_order FROM unmask_points WHERE identity = ? AND conversation = ?')
+      .get(id, conversation);
+    return row?.first_order ?? 0;
   }
 
   list(): Item[] {

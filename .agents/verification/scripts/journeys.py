@@ -30,6 +30,7 @@ ROOT =Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / '.agents/verification/fixtures'
 EVIDENCE = Path.home() / '.agents/projects/secret-gateway/goals/issue-1/evidence'
 PLACEHOLDER = re.compile(r'⟦SECRET_[0-9a-f]{6,64}⟧')
+REVIEW_LINK = re.compile(r'\[⟦SECRET_[0-9a-f]{6,64}⟧\]\(http://127\.0\.0\.1:\d+/review/reveal/[0-9a-f]{64}\?token=[0-9a-f]{32}\)')
 PROVIDER_KEY = re.compile(r'^(npg_|cfut_|GOCSPX-|ya29\.|ghp_|github_pat_|sk-ant-|AKIA|sk_live_)')
 COMMAND = shlex.split(os.environ.get('GATEWAY_COMMAND', 'bun run start'))
 TEXT_WITHHELD_MARK = 'withheld by secret-gateway: the secret scanner was unavailable'
@@ -290,13 +291,15 @@ def gateway(upstream_url, data_dir=None, env=None):
         stop_process(process)
 
 
-def messages_request(gw, messages, stream=False, system=None):
+def messages_request(gw, messages, stream=False, system=None, session=None):
     payload = {'model': 'claude-haiku-5-5', 'max_tokens': 256, 'messages': messages}
     if system is not None:
         payload['system'] = system
     if stream:
         payload['stream'] = True
     headers = {'x-api-key': 'synthetic-test-key', 'anthropic-version': '2023-06-01'}
+    if session is not None:
+        headers['x-claude-code-session-id'] = session
     return http('POST', f'{gw.url}/v1/messages', body=payload, headers=headers)
 
 
@@ -362,12 +365,12 @@ def j_streaming(ctx):
         checks.append(ensure(tool_inputs_from_sse(events) == [{'credential': secret}],
                              'streamed tool input restored across fragment boundaries (fragments of 5 characters)'))
         text = text_deltas_from_sse(events)
-        checks.append(ensure(PLACEHOLDER.search(text) is not None and secret not in text,
-                             'streamed text blocks keep their placeholder (restore is for tool input only)'))
+        checks.append(ensure(REVIEW_LINK.search(text) is not None and secret not in text,
+                             'streamed text blocks link the placeholder to its review page (tool input gets the value)'))
         echo = echo_placeholders(upstream.last()['body'])
         expected = [name for name, _ in parse_sse(build_stream(echo, upstream.fragment))]
         checks.append(ensure([name for name, _ in events] == expected,
-                             'streamed event sequence is unchanged apart from the restored tool input'))
+                             'streamed event sequence is unchanged apart from the restored tool input and text links'))
     return checks
 
 
@@ -384,8 +387,8 @@ def j_non_streaming(ctx):
         tool_inputs = [b['input'] for b in reply['content'] if b['type'] == 'tool_use']
         checks.append(ensure(tool_inputs == [{'credential': secret}], 'non-streaming tool input restored for the client'))
         texts = [b['text'] for b in reply['content'] if b['type'] == 'text']
-        checks.append(ensure(len(texts) == 1 and PLACEHOLDER.search(texts[0]) is not None and secret not in texts[0],
-                             'non-streaming text block is not restored'))
+        checks.append(ensure(len(texts) == 1 and REVIEW_LINK.search(texts[0]) is not None and secret not in texts[0],
+                             'non-streaming text block links the placeholder to its review page'))
     return checks
 
 
@@ -593,25 +596,98 @@ def j_review(ctx):
         checks.append(ensure(status == 200 and json.loads(body)['updated'] is True, 'answer "Not a secret" is accepted'))
         gw.answer(ids['anthropic'], 'secret')
 
+        history = [user(f'a {values["github"]}'), user(f'b {values["anthropic"]}'), user(f'c {values["cloudflare"]}')]
+        placeholder = f'⟦SECRET_{ids["github"][:6]}⟧'
         upstream.clear()
-        messages_request(gw, [user(f'a {values["github"]}'), user(f'b {values["anthropic"]}'),
-                              user(f'c {values["cloudflare"]}')])
+        messages_request(gw, history)
         sent = forwarded_text(upstream)
-        checks.append(ensure(values['github'] in sent, '"Not a secret" unmasks the value in the next request'))
+        checks.append(ensure(values['github'] not in sent and placeholder in sent,
+                             '"Not a secret" keeps messages sent before the answer masked'))
         checks.append(ensure(values['anthropic'] not in sent and values['cloudflare'] not in sent,
                              '"Secret" keeps its value masked, and the pending item stays masked'))
-        checks.append(ensure(sent.count(values['github']) == 1, 'history unmasking applies to every occurrence'))
+
+        upstream.clear()
+        messages_request(gw, history + [{'role': 'assistant', 'content': 'ok'}, user(f'd {values["github"]}')])
+        sent = forwarded_text(upstream)
+        newest = json.dumps(upstream.last()['body']['messages'][-1], ensure_ascii=False)
+        checks.append(ensure(values['github'] in newest and sent.count(values['github']) == 1 and placeholder in sent,
+                             '"Not a secret" unmasks only the message sent after the answer'))
+
+        upstream.clear()
+        messages_request(gw, [user(f'a {values["github"]}')], session='another-conversation')
+        checks.append(ensure(values['github'] in forwarded_text(upstream),
+                             'another conversation sees "Not a secret" unmasked from its first message'))
+
+        reveal = {name: f'/review/reveal/{ids[name]}?token={token}' for name in values}
+        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        checks.append(ensure(all(f'href="{link}"'.encode() in page for link in reveal.values()),
+                             'review page links each held value to its reveal page'))
+        status, headers, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
+        checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
+                             'reveal page with the token shows the value highlighted in its line'))
+        checks.append(ensure(headers.get('cache-control') == 'no-store' and headers.get('referrer-policy') == 'no-referrer',
+                             'reveal page is served no-store and no-referrer'))
+        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}', headers=gw.host())
+        checks.append(ensure(status == 403 and values['github'].encode() not in body,
+                             'reveal without the review token is refused, with no value'))
+        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token=wrong', headers=gw.host())
+        checks.append(ensure(status == 403 and values['github'].encode() not in body,
+                             'reveal with a wrong token is refused, with no value'))
+        status, _, _ = http('GET', f'{gw.url}{reveal["github"]}', headers={'Host': f'evil.example:{gw.port}'})
+        checks.append(ensure(status == 403, 'reveal page refuses a foreign Host'))
+        messages_request(gw, [user(f'd {values["cloudflare"]} {values["anthropic"]}')])
+        _, _, body = http('GET', f'{gw.url}/review/reveal/{ids["cloudflare"]}?token={token}', headers=gw.host())
+        checks.append(ensure(f'<mark>{values["cloudflare"]}</mark>'.encode() in body and values['anthropic'].encode() not in body
+                             and '⟦SECRET_'.encode() in body,
+                             'reveal line shows another masked value on the same line as a placeholder'))
+        messages_request(gw, [user(f'first line\nsecond line\nthird {values["cloudflare"]}\n'
+                                   f'fourth {values["anthropic"]}\nfifth line\nsixth line')])
+        _, _, body = http('GET', f'{gw.url}/review/reveal/{ids["cloudflare"]}?token={token}', headers=gw.host())
+        checks.append(ensure(b'second line' in body and b'fourth' in body and b'first line' not in body
+                             and b'fifth line' not in body, 'reveal shows the nearest non-empty line above and below'))
+        gap = '\n' * 5
+        messages_request(gw, [user(f'The command printed:{gap}DATABASE_URL={values["cloudflare"]}{gap}The output follows')])
+        _, _, body = http('GET', f'{gw.url}/review/reveal/{ids["cloudflare"]}?token={token}', headers=gw.host())
+        checks.append(ensure(f'The command printed:{gap}DATABASE_URL=<mark>{values["cloudflare"]}</mark>{gap}The output follows'
+                             .encode() in body, 'reveal keeps empty lines between the context lines and the value'))
+        checks.append(ensure(b'user message, message' in body, 'each appearance shows where it is in the session'))
+        checks.append(ensure(values['anthropic'].encode() not in body,
+                             'lines above and below mask other secrets as placeholders'))
+        checks.append(ensure(b'<h2>Value</h2>' not in body and b'<h2>Where it appears</h2>' in body,
+                             'reveal page shows only the lines where the value appears'))
+        _, _, reply = messages_request(gw, [user(f'link {values["cloudflare"]}')])
+        text = ''.join(block['text'] for block in json.loads(reply)['content'] if block['type'] == 'text')
+        expected_link = (f'[⟦SECRET_{ids["cloudflare"][:6]}⟧](http://127.0.0.1:{gw.port}'
+                         f'/review/reveal/{ids["cloudflare"]}?token={token})')
+        checks.append(ensure(expected_link in text, 'reply links the placeholder to the reveal page of its identity'))
+        pending_before = len(gw.items())
+        upstream.clear()
+        status, _, _ = messages_request(gw, [
+            {'role': 'assistant', 'content': [{'type': 'text', 'text': text}]},
+            user('continue'),
+        ])
+        sent = forwarded_text(upstream)
+        checks.append(ensure(status == 200, 'a reply with a reveal link is accepted when sent back as history'))
+        checks.append(ensure(token not in sent and expected_link not in sent,
+                             'a reveal link sent back as history is reduced to its placeholder, so the review token stays local'))
+        checks.append(ensure(f'⟦SECRET_{ids["cloudflare"][:6]}⟧' in sent, 'the placeholder of a reveal link stays in history'))
+        checks.append(ensure(len(gw.items()) == pending_before, 'a reveal link sent back as history adds no review item'))
 
     with gateway(upstream.url, data_dir=data, env=ctx['env']) as gw:
         status_by_id = {i['id']: i['status'] for i in gw.items()}
         checks.append(ensure(status_by_id.get(ids['github']) == 'not_secret'
                              and status_by_id.get(ids['anthropic']) == 'secret',
                              'answers persist across a restart'))
+        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={gw.token()}', headers=gw.host())
+        checks.append(ensure(status == 404 and b'not held in memory' in body and values['github'].encode() not in body,
+                             'after a restart, reveal says the value is not held in memory, with no value'))
         upstream.clear()
-        messages_request(gw, [user(f'a {values["github"]}'), user(f'b {values["anthropic"]}')])
+        messages_request(gw, history + [{'role': 'assistant', 'content': 'ok'}, user(f'd {values["github"]}')])
         sent = forwarded_text(upstream)
-        checks.append(ensure(values['github'] in sent and values['anthropic'] not in sent,
-                             'after a restart, "Not a secret" stays unmasked and "Secret" stays masked'))
+        newest = json.dumps(upstream.last()['body']['messages'][-1], ensure_ascii=False)
+        checks.append(ensure(values['github'] in newest and placeholder in sent and sent.count(values['github']) == 1,
+                             'after a restart, "Not a secret" still masks messages sent before the answer'))
+        checks.append(ensure(values['anthropic'] not in sent, '"Secret" stays masked after a restart'))
     return checks
 
 
@@ -734,7 +810,7 @@ def j_fail_closed(ctx):
 def j_adapter_independence(ctx):
     """Story 37: the masking core must not read the Anthropic message format. Only anthropic.ts and gateway.ts may."""
     source = ROOT / 'src'
-    core = ['detect.ts', 'hits.ts', 'identity.ts', 'masker.ts', 'store.ts', 'notify.ts', 'review.ts']
+    core = ['detect.ts', 'hits.ts', 'identity.ts', 'masker.ts', 'store.ts', 'notify.ts', 'review.ts', 'vault.ts']
     markers = ['content_block', 'tool_use', 'input_json_delta', 'tool_result', 'messages', 'media_type']
     offenders = []
     for name in core:

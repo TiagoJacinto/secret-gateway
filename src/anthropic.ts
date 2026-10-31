@@ -1,6 +1,7 @@
 // Anthropic Messages adapter: walks a request into text slots and appends the prompt note.
 // Images pass through unchanged. The masking core only sees slots, so another provider's message
 // format needs only a new adapter.
+import { createHash } from 'node:crypto';
 
 export const WITHHELD_BLOCK = '[content withheld by secret-gateway: this block type cannot be scanned, so it was not sent]';
 
@@ -19,9 +20,15 @@ export type TextSlot = {
   kind: 'text';
   text: string;
   source: string;
+  // Where the text sits in the session, such as "user message text, message 3".
+  location: string;
+  // 0 for the system prompt, otherwise the message number (1 for the first message).
+  order: number;
   gitContext: boolean;
   write(value: string): void;
 };
+
+type SlotInput = Omit<TextSlot, 'location' | 'order'>;
 
 type Block = Record<string, any>;
 
@@ -30,7 +37,7 @@ function withhold(container: unknown[], index: number): void {
 }
 
 // Strings at any depth of a tool input. They can hold values copied from earlier results.
-function collectLeaves(container: Block, key: string, add: (slot: TextSlot) => void, source: string, gitContext: boolean): void {
+function collectLeaves(container: Block, key: string, add: (slot: SlotInput) => void, source: string, gitContext: boolean): void {
   const current = container[key];
   if (typeof current === 'string') {
     add({ kind: 'text', text: current, source, gitContext, write: (next) => { container[key] = next; } });
@@ -41,7 +48,10 @@ function collectLeaves(container: Block, key: string, add: (slot: TextSlot) => v
 
 export function collectSlots(body: Block): TextSlot[] {
   const slots: TextSlot[] = [];
-  const add = (slot: TextSlot) => slots.push(slot);
+  // Position in the session of the message being walked. System prompt text has none.
+  let position: string | undefined;
+  let order = 0;
+  const add = (slot: SlotInput) => slots.push({ ...slot, location: position ? `${slot.source}, ${position}` : slot.source, order });
 
   if (typeof body.system === 'string') {
     add({ kind: 'text', text: body.system, source: 'system prompt', gitContext: false, write: (v) => { body.system = v; } });
@@ -64,7 +74,9 @@ export function collectSlots(body: Block): TextSlot[] {
     }
   }
 
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
+    position = `message ${index + 1}`;
+    order = index + 1;
     const role = message?.role === 'assistant' ? 'assistant' : 'user';
     if (typeof message?.content === 'string') {
       const holder = message;
@@ -115,6 +127,14 @@ export function collectSlots(body: Block): TextSlot[] {
     });
   }
   return slots;
+}
+
+// Conversation of a request: a key from the Claude Code session header and a digest of the system prompt,
+// and the message count. Side requests of one session, which carry their own system prompt, get their own key.
+export function conversationOf(headers: Headers, body: Block): { key: string; count: number } {
+  const system = createHash('sha256').update(JSON.stringify(body.system ?? null)).digest('hex');
+  const count = Array.isArray(body.messages) ? body.messages.length : 0;
+  return { key: `${headers.get('x-claude-code-session-id') ?? ''}:${system}`, count };
 }
 
 export function addPromptNote(body: Block): void {
