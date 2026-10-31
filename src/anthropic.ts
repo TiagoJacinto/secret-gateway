@@ -111,6 +111,10 @@ export function collectSlots(body: Block): TextSlot[] {
             block.content.forEach((inner: Block, innerIndex: number) => {
               if (inner?.type === 'text') {
                 add({ kind: 'text', text: inner.text, source, gitContext, write: (v) => { inner.text = v; } });
+              } else if (inner?.type === 'tool_reference' && typeof inner.tool_name === 'string'
+                && Object.keys(inner).length === 2) {
+                add({ kind: 'text', text: inner.tool_name, source: `${source} tool reference`, gitContext: false,
+                  write: (v) => { inner.tool_name = v; } });
               } else if (!(inner?.type === 'image' && inner.source?.type === 'base64')) {
                 withhold(block.content, innerIndex);
               }

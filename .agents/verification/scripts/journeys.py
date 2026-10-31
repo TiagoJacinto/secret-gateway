@@ -519,6 +519,29 @@ def j_exemptions_and_formats(ctx):
     return checks
 
 
+def j_tool_references(ctx):
+    upstream = ctx['upstream']
+    name = 'mcp__computer-use-linux__list_windows'
+    secret = ctx['github']
+    blocks = [{'type': 'tool_reference', 'tool_name': name},
+              {'type': 'tool_reference', 'tool_name': secret},
+              {'type': 'tool_reference', 'tool_name': name, 'extra': secret},
+              {'type': 'tool_reference', 'tool_name': 42}]
+    with gateway(upstream.url, env=ctx['env']) as gw:
+        upstream.clear()
+        status, _, _ = messages_request(gw, [
+            {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_search', 'content': blocks}]},
+        ])
+        ensure(status == 200, f'tool reference request returned {status}')
+        sent = upstream.last()['body']['messages'][0]['content'][0]['content']
+        return [ensure(sent[0] == blocks[0], 'valid tool reference reaches upstream unchanged'),
+                ensure(secret not in json.dumps(sent), 'secret in tool reference is not forwarded'),
+                ensure(sent[1]['type'] == 'tool_reference' and '⟦SECRET_' in sent[1]['tool_name'],
+                       'tool reference name is scanned'),
+                ensure(all(item['type'] == 'text' and 'content withheld' in item['text'] for item in sent[2:]),
+                       'malformed tool references are withheld')]
+
+
 def j_identity_restart(ctx):
     checks = []
     upstream = ctx['upstream']
@@ -852,6 +875,7 @@ JOURNEYS = [
     ('detection-fixtures', j_detection_fixtures),
     ('canonical-forms', j_canonical_forms),
     ('exemptions-and-formats', j_exemptions_and_formats),
+    ('tool-references', j_tool_references),
     ('identity-restart', j_identity_restart),
     ('review', j_review),
     ('images', j_images),
