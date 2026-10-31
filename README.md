@@ -30,6 +30,8 @@ Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscript
 
 2. The gateway has no npm dependencies. Bun runs it directly, so there is no install step.
 
+3. Enable the pre-commit secret check. Install [lefthook](https://lefthook.dev) and [gitleaks](https://github.com/gitleaks/gitleaks) on your PATH, then run `lefthook install` in the repository root once. A commit with a staged secret is then blocked.
+
 ## Run
 
 Start the gateway in its own terminal. It keeps running until you stop it.

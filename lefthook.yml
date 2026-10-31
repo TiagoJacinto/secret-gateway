@@ -1,0 +1,6 @@
+# Run `lefthook install` once per clone. Requires lefthook and gitleaks on PATH.
+# Scans only staged content. `bun run check:secrets` scans full history in CI.
+pre-commit:
+  commands:
+    secrets:
+      run: gitleaks protect --staged --redact --exit-code 1 --no-banner
