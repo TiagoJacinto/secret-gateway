@@ -5,6 +5,7 @@
   "description": "Local masking gateway between Claude Code and the Anthropic Messages API",
   "type": "module",
   "scripts": {
-    "start": "bun run src/main.ts"
+    "start": "bun run src/main.ts",
+    "check:secrets": "gitleaks detect --redact --exit-code 1 --no-banner --log-opts=--all"
   }
 }
