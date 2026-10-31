@@ -2,8 +2,9 @@
 // placeholders are restored in the response. Any failure refuses the request instead of forwarding raw.
 import type { ReviewSurface } from './review.ts';
 import type { Masker } from './masker.ts';
-import { restoreJson, restoreSse, type Restore } from './unmask.ts';
+import { restoreJson, restoreSse, restoreResponsesJson, restoreResponsesSse, type Restore } from './unmask.ts';
 import { addPromptNote, conversationOf } from './anthropic.ts';
+import { addResponseNote, responseConversation } from './responses.ts';
 
 const MESSAGE_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens']);
 const HOP_BY_HOP = new Set([
@@ -21,6 +22,7 @@ const HOP_BY_HOP = new Set([
 ]);
 
 export type GatewayDeps = {
+  protocol?: 'anthropic' | 'responses';
   masker: Masker;
   review: ReviewSurface;
   upstreamBaseUrl: string;
@@ -55,10 +57,15 @@ export function createHandler(deps: GatewayDeps): (request: Request) => Promise<
 }
 
 async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: RequestStats): Promise<Response> {
+  const responses = deps.protocol === 'responses';
+  if (responses && request.method !== 'GET' && !['/responses', '/responses/compact'].includes(url.pathname)) return refuse(400, 'unsupported Responses route; not forwarded');
+  if (request.headers.has('content-encoding')) return refuse(400, 'compressed requests are not supported; not forwarded');
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   let body: string | Uint8Array | null = hasBody ? new Uint8Array(await request.arrayBuffer()) : null;
   let restore: Restore | undefined;
-  const isMessages = MESSAGE_PATHS.has(url.pathname);
+  let responseStream = false;
+  const isMessages = responses ? ['/responses', '/responses/compact'].includes(url.pathname) : MESSAGE_PATHS.has(url.pathname);
+  if (isMessages && (!hasBody || body === null || body.length === 0)) return refuse(400, 'message body required');
 
   if (body !== null && body.length > 0) {
     const isJson = (request.headers.get('content-type') ?? '').includes('application/json');
@@ -76,16 +83,18 @@ async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: Reque
       const record = parsed as Record<string, any>;
       if (isObject && ('messages' in record || isMessages)) {
         try {
-          const conversation = conversationOf(request.headers, record);
+          const conversation = responses ? responseConversation(request.headers, record) : conversationOf(request.headers, record);
           const masked = await deps.masker.mask(record, conversation);
-          if (isMessages) addPromptNote(masked.body);
+          if (isMessages) (responses ? addResponseNote : addPromptNote)(masked.body);
           body = JSON.stringify(masked.body);
           restore = masked.restore;
+          responseStream = responses && record.stream === true;
           stats.masked = masked.masked;
           stats.degraded = masked.degraded;
           stats.session = conversation.key.split(':')[0].slice(0, 8);
           if (masked.degraded) deps.log('scanner unavailable: text withheld for this request');
         } catch (error) {
+          if (responses && ['unsupported content', 'unsupported Responses input item', 'unsupported Responses input'].includes((error as Error).message)) deps.log((error as Error).message);
           deps.log(`masking failed (${(error as Error).name}); request not forwarded`);
           return refuse(503, 'secret masking failed; request not forwarded');
         }
@@ -113,13 +122,19 @@ async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: Reque
   const responseHeaders = new Headers();
   for (const [name, value] of upstream.headers) if (!HOP_BY_HOP.has(name.toLowerCase())) responseHeaders.set(name, value);
   let responseBody: ReadableStream<Uint8Array> | string | null = upstream.body;
-  const contentType = upstream.headers.get('content-type') ?? '';
+  let contentType = upstream.headers.get('content-type') ?? '';
+  // The Codex backend can omit Content-Type. Responses requests already specify
+  // the wire format; still restore tool inputs and declare that format to clients.
+  if (responses && restore && upstream.ok && !contentType) {
+    contentType = responseStream ? 'text/event-stream' : 'application/json';
+    responseHeaders.set('content-type', contentType);
+  }
   if (restore && upstream.ok && contentType.includes('text/event-stream') && upstream.body) {
-    responseBody = restoreSse(upstream.body, restore);
+    responseBody = (responses ? restoreResponsesSse : restoreSse)(upstream.body, restore);
   } else if (restore && upstream.ok && contentType.includes('application/json')) {
     const text = await upstream.text();
     try {
-      responseBody = await restoreJson(text, restore);
+      responseBody = await (responses ? restoreResponsesJson : restoreJson)(text, restore);
     } catch {
       responseBody = text;
     }

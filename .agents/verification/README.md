@@ -12,11 +12,21 @@ python3 .agents/verification/scripts/check.py
 
 Runs the launch smoke check (`scripts/check.py`) and then every journey in `scripts/journeys.py`. Exit 0 means all journeys passed. Evidence:
 
+It also runs `scripts/responses_check.py`: Responses text masking, JSON and fragmented SSE function/custom-tool restoration with and without upstream Content-Type, and refusal of malformed, compressed, and unsupported requests against a fake upstream. A live `codex-masked exec` reply probe passed on 2026-10-31 with the existing ChatGPT login. A live tool restoration probe passed on 2026-10-31 after fixing missing upstream Content-Type: infer JSON/SSE from the Responses request when the header is absent. Codex long-running sessions and compaction remain unverified live.
+
 - `~/.agents/projects/secret-gateway/goals/issue-1/evidence/http-smoke.json` (smoke; overwritten each run)
 - `~/.agents/projects/secret-gateway/goals/issue-1/evidence/journeys.json` (journeys; overwritten each run)
 - `~/.agents/projects/secret-gateway/goals/issue-1/evidence/auth-probe.json` (approved subscription probe, see below)
 
 Evidence never contains values. Archive milestone copies separately.
+
+## Live Codex restoration probe
+
+```sh
+python3 .agents/verification/scripts/responses_live_probe.py
+```
+
+Uses the running gateway on port 8788, the existing ChatGPT login, and real model capacity. A temporary verifier accepts only the original synthetic UUID supplied in the prompt. The command prints only a pass/fail report. It is separate from the automated suite. Use `--base-url` to test another Responses listener.
 
 ## Launch settings
 
@@ -46,6 +56,7 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | `detection-fixtures` | Every positive fixture (48) masked at the HTTP boundary; every negative (8) forwarded unchanged; git SHA exempt only in git output |
 | `canonical-forms` | Plain, quoted and padded, percent-encoded, and base64 copies share one placeholder |
 | `exemptions-and-formats` | UUID, JWT, base64 blob, and unknown random token masked; tool-use and tool-result history masked; gateway placeholders not re-masked; git SHA exempt |
+| `tool-references` | Valid tool references pass through; names are scanned; malformed references are withheld |
 | `identity-restart` | Placeholder stable across restart; identity key mode 0600 and data directory mode 0700; deleted key gives a new identity and asks again |
 | `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal reports the value is not in memory; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |
 | `images` | Five screenshots forwarded byte for byte (not masked, by decision); text beside a screenshot still masked; an image given by URL is withheld and not forwarded |
@@ -132,8 +143,8 @@ Result on 2026-10-30: PASS. The reply carried the marker. One Messages request r
 - Desktop notification buttons do not appear on this machine. AppArmor profile `/etc/apparmor.d/notify-send` blocks `GetCapabilities`. Notifications are sent as plain notifications, and the recording notifier verifies the action list only. The review page is the working answer path.
 - **Gateway down, plain alias: Claude Code attempts a direct connection to the API host** (strace check, 2026-10-30). It is not known whether a request body was sent. The README alias adds proxy settings. With them, one gateway-down run made no remote connection, and one gateway-running run gave a masked reply. Each is one run. Other HTTPS traffic from Claude Code goes to the closed proxy and fails. Not tested: features that need other HTTPS hosts.
 - Thinking blocks are not scanned or changed, since the model only saw placeholders. Tool definitions are not scanned.
-- Unsupported content blocks (documents, URL images, other types) are withheld, not scanned.
-- Benchmarks and journeys do not measure the desktop UI, Claude Code itself beyond the probe, or the Codex adapter (out of scope).
+- Unsupported content blocks (documents, URL images, other types) are withheld, not scanned. Tool references in tool results are supported when they contain only a type and a string tool name; their names are scanned.
+- Benchmarks and journeys do not measure the desktop UI or long-running Claude/Codex sessions.
 
 ## Decisions and checkpoints
 

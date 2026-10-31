@@ -1,6 +1,16 @@
 # secret-gateway
 
-A local gateway between Claude Code and the Anthropic Messages API. It masks secrets in the text sent to the model, restores placeholders in tool calls, and lets you review masked values without blocking the agent.
+A local gateway for Claude Code (Anthropic Messages) and Codex (Responses). It masks secrets in the text sent to the model, restores placeholders in tool calls, and lets you review masked values without blocking the agent.
+
+## Codex Masked
+
+On this machine, run `codex-masked` or select **Codex Masked** in T3. The launcher uses the existing Codex login and routes Responses requests through `secret-gateway-codex.service` on `127.0.0.1:8788`. Its review page is `http://127.0.0.1:8788/review`. The Claude listener stays on port 8787.
+
+The installed launcher and unit are maintained in `scripts/codex-masked` and `scripts/secret-gateway-codex.service`. The unit names this machine's worktree; update its paths before installing elsewhere. Start or inspect it with `systemctl --user start secret-gateway-codex.service` and `systemctl --user status secret-gateway-codex.service`.
+
+The Responses adapter scans instructions, messages, tool results, tool arguments, tool descriptions, and metadata. It restores placeholders in function and custom tool calls, including streamed fragments. Protocol identifiers and encrypted reasoning/compaction remain opaque. Data-URL images pass through unmasked, as with Claude. Unsupported input items and compressed requests are refused. The launcher disables request compression and WebSockets so requests use the masking HTTP boundary. Responses and compaction POSTs are supported; other write routes are refused.
+
+This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service currently depends on this worktree remaining present.
 
 Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
 
@@ -80,5 +90,5 @@ These run the HTTP-boundary journeys and the scanner benchmark. The commands and
 - Desktop notification buttons need an AppArmor change to `notify-send` on this machine. Not changed. Notifications are plain, and the review page answers. Story 27 (buttons) is not met; you accepted this on 2026-10-30.
 - Scanner-alone recall is low for Cloudflare, Neon, Google and AWS formats. The name and entropy layers cover them in the full pipeline.
 - Thinking blocks are not changed. Tool definitions are not scanned. Document blocks and URL images are withheld, not scanned.
-- Not covered: Codex or other agents, hosted use, multiple users, and live validation with providers.
+- Not covered: other agents, hosted use, and multiple users. Codex has HTTP-boundary checks and a live reply probe; long-running Codex sessions and compaction have not been verified live.
 - Claude Code's own transcripts keep real values, as they did before.

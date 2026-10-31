@@ -11,6 +11,7 @@ import { ReviewSurface } from './review.ts';
 import { ManualClock, NotifySendNotifier, RecordingNotifier, ReviewNotifier, SystemClock } from './notify.ts';
 import { createHandler } from './gateway.ts';
 import { collectSlots } from './anthropic.ts';
+import { collectResponseSlots } from './responses.ts';
 import { SecretVault } from './vault.ts';
 
 const config = loadConfig();
@@ -64,10 +65,11 @@ const masker = new Masker({
     log(`pending ${item.id.slice(0, 8)} from ${item.source} (length ${item.length})`);
     notifier.enqueue(item);
   },
-  collectSlots,
+  collectSlots: config.protocol === 'responses' ? collectResponseSlots : collectSlots,
 });
 
 const handler = createHandler({
+  protocol: config.protocol,
   masker,
   review,
   upstreamBaseUrl: config.upstreamBaseUrl,

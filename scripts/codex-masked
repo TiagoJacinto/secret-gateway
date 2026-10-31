@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# A separate Responses gateway preserves the existing Anthropic listener.
+if ! curl --fail --silent --output /dev/null http://127.0.0.1:8788/review; then
+  printf '%s\n' 'codex-masked: start secret-gateway-codex.service first' >&2
+  exit 1
+fi
+exec codex "$@" \
+  -c 'model_provider="secret_gateway"' \
+  -c 'model_providers.secret_gateway.name="Secret gateway"' \
+  -c 'model_providers.secret_gateway.base_url="http://127.0.0.1:8788"' \
+  -c 'model_providers.secret_gateway.wire_api="responses"' \
+  -c 'model_providers.secret_gateway.requires_openai_auth=true' \
+  -c 'model_providers.secret_gateway.supports_websockets=false' \
+  -c 'features.enable_request_compression=false'

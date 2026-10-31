@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export type Config = {
+  protocol: 'anthropic' | 'responses';
   host: string;
   port: number;
   upstreamBaseUrl: string;
@@ -20,6 +21,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (!LOOPBACK.has(host)) throw new Error(`HOST must be loopback (got ${host}); the gateway is local-only`);
   const port = Number(env.PORT ?? 8787);
   return {
+    protocol: env.GATEWAY_PROTOCOL === 'responses' ? 'responses' : 'anthropic',
     host,
     port,
     upstreamBaseUrl: (env.UPSTREAM_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, ''),

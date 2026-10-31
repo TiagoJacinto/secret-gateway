@@ -128,4 +128,6 @@ if __name__ == '__main__':
     path, report = journeys.write_evidence(results, context)
     print(json.dumps({'journeys': report['status'], 'failed': [r['journey'] for r in results if r['status'] != 'PASS']}, indent=2))
     print(f'Journey evidence: {path}')
+    import responses_check
+    responses_check.run()
     raise SystemExit(0 if smoke_code == 0 and report['status'] == 'PASS' else 1)

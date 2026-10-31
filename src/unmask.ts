@@ -77,6 +77,64 @@ export async function restoreJson(text: string, restore: Restore): Promise<strin
   return JSON.stringify(message);
 }
 
+async function restoreResponseItem(item: any, restore: Restore): Promise<void> {
+  if (item?.type === 'function_call' && typeof item.arguments === 'string') item.arguments = await replaceAll(item.arguments, restore.lookup, jsonValue);
+  if (item?.type === 'custom_tool_call' && typeof item.input === 'string') item.input = await replaceAll(item.input, restore.lookup, rawValue);
+  for (const part of item?.content ?? []) if (part.type === 'output_text' && typeof part.text === 'string') {
+    part.text = await replaceAll(part.text, restore.link, reviewLink);
+  }
+}
+
+export async function restoreResponsesJson(text: string, restore: Restore): Promise<string> {
+  const response = JSON.parse(text);
+  for (const item of response.output ?? []) await restoreResponseItem(item, restore);
+  return JSON.stringify(response);
+}
+
+export function restoreResponsesSse(upstream: ReadableStream<Uint8Array>, restore: Restore): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const fragments = new Map<string, PlaceholderStream>();
+  return new ReadableStream({
+    async start(controller) {
+      const emit = (event: string) => controller.enqueue(encoder.encode(`${event}\n\n`));
+      const handle = async (event: string) => {
+        const lines = event.split('\n');
+        const data = lines.find(line => line.startsWith('data:'));
+        const payload = data ? parseData(data) : undefined;
+        if (!payload) return emit(event);
+        const type = payload.type;
+        const key = `${payload.item_id ?? payload.output_index}:${type?.replace(/\.(delta|done)$/, '')}`;
+        if (['response.function_call_arguments.delta', 'response.custom_tool_call_input.delta', 'response.output_text.delta'].includes(type)) {
+          if (!fragments.has(key)) fragments.set(key, new PlaceholderStream(
+            type === 'response.output_text.delta' ? restore.link : restore.lookup,
+            type === 'response.output_text.delta' ? reviewLink : type === 'response.function_call_arguments.delta' ? jsonValue : rawValue));
+          payload.delta = await fragments.get(key)!.push(payload.delta ?? '');
+        }
+        if (type === 'response.function_call_arguments.done') payload.arguments = await replaceAll(payload.arguments, restore.lookup, jsonValue);
+        if (type === 'response.custom_tool_call_input.done') payload.input = await replaceAll(payload.input, restore.lookup, rawValue);
+        if (type === 'response.output_text.done') payload.text = await replaceAll(payload.text, restore.link, reviewLink);
+        if (payload.item) await restoreResponseItem(payload.item, restore);
+        if (payload.response) for (const item of payload.response.output ?? []) await restoreResponseItem(item, restore);
+        emit([...lines.filter(line => !line.startsWith('data:')), `data: ${JSON.stringify(payload)}`].join('\n'));
+      };
+      let buffer = '';
+      try {
+        for await (const chunk of upstream) {
+          buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, '\n');
+          let end;
+          while ((end = buffer.indexOf('\n\n')) !== -1) {
+            await handle(buffer.slice(0, end)); buffer = buffer.slice(end + 2);
+          }
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) await handle(buffer);
+        controller.close();
+      } catch (error) { controller.error(error); }
+    },
+  });
+}
+
 export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restore): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
