@@ -10,9 +10,12 @@ export const PROMPT_NOTE = [
   'A placeholder stands in for a real value. The gateway restores the real value in tool inputs when the tool runs.',
   'Use each placeholder exactly as written in commands and tool arguments. Do not treat a placeholder as missing, broken or unknown,',
   'and do not warn about it or ask the user to supply the value.',
-  'When a value is only visible in a screenshot, prefer the dashboard\'s Copy button and paste the value over retyping what you read.',
+  'Masking covers all text you receive, including command output, files and accessibility trees, so reading a credential as text shows you only its placeholder.',
+  'Handle the credentials a task needs yourself. To move a value shown in a dashboard, read it from the accessibility tree',
+  'and pass its placeholder to a command that keeps it out of the output, such as printf \'%s\' ⟦SECRET_xxxxxx⟧ | gh secret set NAME.',
   'After using a placeholder, check the result so that a wrong value fails loudly.',
-  'Prefer text sources, such as the accessibility tree, over screenshots when both show the same information.',
+  'Screenshots, including those attached to other tool results, are not masked. Prefer text sources, such as the accessibility tree,',
+  'over screenshots, and take a screenshot only when no credential value is on screen.',
   'Do not delete, rotate or revoke a credential without the user\'s explicit approval. Report where it is instead.',
 ].join(' ');
 

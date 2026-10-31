@@ -38,9 +38,11 @@ WITHHELD_MARK = 'content withheld by secret-gateway'
 NOTE_PHRASES = {
     'placeholders used as written': 'Use each placeholder exactly as written',
     'placeholder is not missing or broken': 'Do not treat a placeholder as missing, broken or unknown',
-    'copy and paste preferred over screen reading': "prefer the dashboard's Copy button and paste",
+    'text, including accessibility trees, is masked': 'including command output, files and accessibility trees',
+    'agent handles credentials through placeholders': 'Handle the credentials a task needs yourself',
     'verify after using a placeholder': 'check the result',
-    'text preferred over screenshots': 'Prefer text sources, such as the accessibility tree, over screenshots',
+    'screenshots are not masked': 'are not masked. Prefer text sources, such as the accessibility tree,',
+    'no screenshot while a credential is on screen': 'take a screenshot only when no credential value is on screen',
     'no deletion or revocation without approval': 'Do not delete, rotate or revoke a credential without',
 }
 REGISTRY = {'roots': [], 'data_dirs': []}

@@ -42,7 +42,7 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | --- | --- |
 | `streaming` | Raw secret absent upstream; tool input restored across 5-character fragments; streamed text blocks link each placeholder to its review page; event sequence unchanged apart from the restored tool input and text links |
 | `non-streaming` | Tool input restored for the client; text block links the placeholder to its review page |
-| `prompt-note` | Original system prompt kept; note covers placeholder use, no "missing" warnings, Copy-and-paste preference, verification, text over screenshots, no deletion or revocation without approval; note added without a system prompt |
+| `prompt-note` | Original system prompt kept; note covers placeholder use, no "missing" warnings, masking of all text including accessibility trees, handling credentials through placeholders, verification, unmasked screenshots and text over screenshots, no screenshot while a credential is on screen, no deletion or revocation without approval; note added without a system prompt |
 | `detection-fixtures` | Every positive fixture (48) masked at the HTTP boundary; every negative (8) forwarded unchanged; git SHA exempt only in git output |
 | `canonical-forms` | Plain, quoted and padded, percent-encoded, and base64 copies share one placeholder |
 | `exemptions-and-formats` | UUID, JWT, base64 blob, and unknown random token masked; tool-use and tool-result history masked; gateway placeholders not re-masked; git SHA exempt |
