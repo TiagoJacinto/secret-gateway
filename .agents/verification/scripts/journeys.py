@@ -516,6 +516,103 @@ def j_exemptions_and_formats(ctx):
         ])
         sent = upstream.last()['body']['messages'][1]['content'][0]['content']
         checks.append(ensure(sent == git_output, 'a git SHA in git output is exempt'))
+
+        thread_hex = hashlib.sha256(b'synthetic-t3-thread').hexdigest()
+        t3_output = '\n'.join([
+            f'threadId mcp:launch:{thread_hex}',
+            f'<t3-thread://v2/{uuid_value}/mcp:launch:{thread_hex}>',
+            f'`scheduled-task:command:mcp:{uuid_value}:schedule-task:goal-start-2026-11-01`',
+            f'{{"projectId":"{uuid_value}","runId":"run:thread:mcp%3Alaunch%3A{thread_hex}:ordinal:1"}}',
+        ])
+        t3_secrets = '\n'.join([
+            f'{{"tokenId":"{uuid_value}"}}',
+            f't3-citation://v1/{uuid_value}/thread?text={unknown}',
+        ])
+        upstream.clear()
+        messages_request(gw, [
+            {'role': 'assistant', 'content': [{'type': 'tool_use', 'id': 'toolu_t3', 'name': 'mcp__t3-code__t3_thread_read',
+                                               'input': {'threadId': f'mcp:launch:{thread_hex}'}}]},
+            {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_t3',
+                                          'content': t3_output + '\n' + t3_secrets}]},
+        ])
+        body = upstream.last()['body']['messages']
+        sent = body[1]['content'][0]['content']
+        checks.append(ensure(sent.startswith(t3_output), 'T3 thread, run, task and link identifiers are exempt'))
+        checks.append(ensure(body[0]['content'][0]['input']['threadId'] == f'mcp:launch:{thread_hex}',
+                             'a T3 identifier in a tool input is exempt'))
+        checks.append(ensure(f'"tokenId":"{uuid_value}"' not in sent, 'a UUID under a non-T3 key stays masked'))
+        checks.append(ensure(unknown not in sent, 'a token in a T3 link query stays masked'))
+    return checks
+
+
+def j_exemption_file(ctx):
+    """Exemptions live in exemptions.json and the `exempt` CLI edits it. The running gateway applies edits without a restart."""
+    checks = []
+    upstream = ctx['upstream']
+    value = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d'
+    text = f'ticket acme-ref:{value} opened'
+    suffixed = f'ticket {value}-xq9ticket opened'
+
+    def exempt(gw, *args):
+        env = dict(os.environ, GATEWAY_DATA_DIR=str(gw.data_dir))
+        return subprocess.run(['bun', 'run', 'src/exempt.ts', *args], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    def forwarded(gw, message=text):
+        upstream.clear()
+        status, _, _ = messages_request(gw, [user(message)])
+        ensure(status == 200, f'exemption request returned {status}')
+        return value in forwarded_text(upstream)
+
+    with gateway(upstream.url, env=ctx['env']) as gw:
+        checks.append(ensure(not forwarded(gw), 'an identifier with no exemption is masked'))
+        added = exempt(gw, 'add', 'pattern', 'acme-ref:.*', '--note', 'journey')
+        checks.append(ensure(added.returncode == 0, 'the CLI adds a pattern'))
+        checks.append(ensure(forwarded(gw), 'an added pattern applies to the next request without a restart'))
+        listing = exempt(gw, 'list').stdout
+        checks.append(ensure('pattern\tacme-ref:.*\tjourney' in listing and 'pattern\tscheduled-task:.*' in listing,
+                             'the list shows the added entry and the seed entries'))
+        checks.append(ensure(oct((gw.data_dir / 'exemptions.json').stat().st_mode & 0o777) == '0o600',
+                             'the exemptions file has mode 0600'))
+        checks.append(ensure(not forwarded(gw, f'ticket other-ref:{value} opened'),
+                             'a pattern matches the whole identifier, so another identifier stays masked'))
+        checks.append(ensure(not forwarded(gw, suffixed), 'a suffix pattern is not yet listed'))
+        exempt(gw, 'add', 'pattern', '.*-xq9ticket')
+        checks.append(ensure(forwarded(gw, suffixed), 'a regex with a leading wildcard matches the end of an identifier'))
+        removed = exempt(gw, 'remove', 'pattern', 'acme-ref:.*')
+        checks.append(ensure(removed.returncode == 0 and not forwarded(gw),
+                             'a removed pattern is masked again without a restart'))
+        exempt(gw, 'add', 'pattern', 'acme-ref:[0-9a-f]{8}')
+        checks.append(ensure(not forwarded(gw), 'a shape pattern does not match a longer identifier that only starts like it'))
+        exempt(gw, 'add', 'pattern', 'acme-ref:[0-9a-f-]{36}')
+        checks.append(ensure(forwarded(gw), 'a shape pattern matches the identifier it describes'))
+        exempt(gw, 'remove', 'pattern', 'acme-ref:[0-9a-f-]{36}')
+        exempt(gw, 'remove', 'pattern', 'acme-ref:[0-9a-f]{8}')
+        for args, label in ((('add', 'pattern', '[a-z0-9]+'), 'a pattern that matches a credential-shaped token'),
+                            (('add', 'pattern', '[0-9a-f-]{36}'), 'a pattern that matches any UUID'),
+                            (('add', 'pattern', '.*'), 'a bare wildcard'),
+                            (('add', 'pattern', '(a+)+b'), 'a quantifier on a group'),
+                            (('add', 'pattern', '(?=x)acme-ref'), 'a lookahead'),
+                            (('add', 'pattern', '(acme)\\1'), 'a backreference'),
+                            (('add', 'pattern', 'a*a*a*a*b'), 'more than 3 quantifiers'),
+                            (('add', 'pattern', 'acme-('), 'a regular expression that does not compile'),
+                            (('add', 'prefix', 'acme-ref:'), 'the removed prefix kind'),
+                            (('add', 'key', 'password'), 'a key named like a credential'),
+                            (('remove', 'pattern', 'acme-ref:.*'), 'removing an absent entry')):
+            checks.append(ensure(exempt(gw, *args).returncode != 0, f'the CLI refuses {label}'))
+        exempt(gw, 'add', 'pattern', 'acme-ref:.*')
+        checks.append(ensure(forwarded(gw), 'the pattern is exempt again before the file is broken'))
+        (gw.data_dir / 'exemptions.json').write_text('{ not json')
+        checks.append(ensure(forwarded(gw), 'an invalid file keeps the previous lists'))
+        log = gw.log_path.read_text()
+        checks.append(ensure('exemptions not loaded, keeping the previous lists' in log and value not in log,
+                             'the log names the problem and holds no value'))
+    broken = Path(tempfile.mkdtemp(prefix='gateway-journey-')) / 'data'
+    REGISTRY['roots'].append(broken.parent)
+    broken.mkdir(mode=0o700)
+    (broken / 'exemptions.json').write_text('{ not json')
+    with gateway(upstream.url, data_dir=broken, env=ctx['env']) as fresh:
+        checks.append(ensure(not forwarded(fresh, f'thread mcp:launch:{value}'),
+                             'an invalid file at startup exempts nothing, not even the seed entries'))
     return checks
 
 
@@ -875,6 +972,7 @@ JOURNEYS = [
     ('detection-fixtures', j_detection_fixtures),
     ('canonical-forms', j_canonical_forms),
     ('exemptions-and-formats', j_exemptions_and_formats),
+    ('exemption-file', j_exemption_file),
     ('tool-references', j_tool_references),
     ('identity-restart', j_identity_restart),
     ('review', j_review),

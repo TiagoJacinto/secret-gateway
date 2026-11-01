@@ -2,6 +2,7 @@
 // restore table. Only identities and answers are persisted in the store. Masked values are kept
 // in the in-memory vault, for the review reveal page only.
 // Screenshots are not masked: they pass through unchanged by decision, since no local OCR is used.
+import type { Exemptions } from './exemptions.ts';
 import { findHits, type Hit, type Scanner } from './hits.ts';
 import type { TextSlot } from './anthropic.ts';
 import { identityOf, placeholderFor } from './identity.ts';
@@ -14,6 +15,8 @@ export type Options = {
   store: AnswerStore;
   vault: SecretVault;
   scanner: Scanner;
+  // Current exemption lists. Called once per request, so edits to the file apply without a restart.
+  exemptions: () => Exemptions;
   // Review page link for a masked identity. Responses link to it instead of showing the value.
   revealUrl: (identity: string) => string;
   now: () => string;
@@ -54,7 +57,7 @@ export class Masker {
   }
 
   async mask(body: Record<string, any>, conversation: Conversation): Promise<MaskedRequest> {
-    const { key, store, vault, scanner, revealUrl, now, onPending, collectSlots } = this.#options;
+    const { key, store, vault, scanner, exemptions, revealUrl, now, onPending, collectSlots } = this.#options;
     const textSlots = collectSlots(body);
     store.recordConversation(conversation.key, conversation.count);
     for (const slot of textSlots) {
@@ -82,6 +85,7 @@ export class Masker {
       textHits = await findHits(
         textSlots.map((slot) => ({ text: slot.text, gitContext: slot.gitContext })),
         scanner,
+        exemptions(),
       );
     } catch {
       textHits = undefined;

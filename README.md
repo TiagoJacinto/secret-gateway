@@ -17,6 +17,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 ## What it does
 
 - Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
+- Leaves identifiers and keys on the exemption lists unmasked. See Exemptions.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
 - Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again.
@@ -62,6 +63,24 @@ alias claude-masked='ANTHROPIC_BASE_URL=http://127.0.0.1:8787 HTTPS_PROXY=http:/
 ```
 
 Then start a session with `claude-masked`. The base URL sends requests to the gateway. The proxy settings send any other connection to port 9, where nothing should listen, so a direct connection to the API fails. Port 9 must have nothing listening on this machine. In one live check on 2026-10-30, this alias gave a masked reply with the gateway running. With the gateway down, it made no remote connection. The alias without the proxy settings did connect to the API host (see Limits).
+
+## Exemptions
+
+Some values match the masking rules but are routing data, such as the T3 Code thread and task IDs an agent passes back to T3 tools. `exemptions.json` in the data directory lists what stays unmasked:
+
+- A **pattern** is a case-insensitive JavaScript regular expression that must match a whole identifier, so `mcp:launch:.*` exempts `mcp:launch:` followed by anything, `.*-ticket-[0-9]+` exempts an identifier of that shape, and `ref-[0-9a-f]{8}` does not exempt `ref-` followed by 40 hex digits. An identifier is a run of letters, digits and `: % / . _ ~ -`, so a link's query text after `?` stays scanned, and an identifier over 256 characters is never exempt.
+- A **key** exempts the value after that name, such as `"threadId":`.
+
+The gateway creates the file on first start with the T3 Code entries, then the file is the source of truth. The gateway re-reads it on the next request after it changes, so no restart is needed. If the file is invalid, the gateway keeps the previous lists (none at startup) and logs the reason. The file holds no secret values. For one value, use **Not a secret** on the review page.
+
+```sh
+bun run exempt list
+bun run exempt add pattern 'acme-ref:.*' --note "vendor ticket IDs"
+bun run exempt add key ticketId
+bun run exempt remove pattern 'acme-ref:.*'
+```
+
+Quote a pattern so the shell does not expand it. The command refuses an entry that could unmask credentials or slow every request: a pattern that matches a credential-shaped token (a hex digest, a UUID, a mixed-case token, a prefixed key, base64, a JWT) such as `.*` or `[0-9a-f-]{36}`; a quantifier on a group, a backreference, a lookaround or a named group; more than 3 quantifiers (`* + ? {n,m}`); a pattern over 128 characters or one that does not compile; and a key named like a credential (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL, DATABASE_URL). Set `GATEWAY_DATA_DIR` to edit another data directory.
 
 ## Review detections
 
