@@ -17,6 +17,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 ## What it does
 
 - Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
+- Leaves T3 Code identifiers unmasked: IDs that start with `mcp:launch:`, `scheduled-task:`, `run:thread:`, `message:mcp:`, `message:provider:`, `turn-item:` or `delegated-task:`, `t3-thread://` and `t3-citation://` links up to their `?`, and values of T3 ID keys such as `"threadId":` and `"projectId":`. Agents pass these back to T3 tools.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
 - Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again.

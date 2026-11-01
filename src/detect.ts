@@ -14,6 +14,12 @@ const TOKEN = /[A-Za-z0-9+/_-]{20,}={0,2}/g;
 const PADDED_BASE64 = /^[A-Za-z0-9+/]{20,}={1,2}$/;
 const ENTROPY_FLOOR = 3.3;
 const SKIPPED_VALUES = /^(true|false|null|none|undefined)$/i;
+// T3 Code identifiers (thread, run, message and scheduled-task IDs, thread links) are routing data the
+// agent passes back to T3 tools. An identifier is one run of ID_CHAR; `?` ends it, so link query text
+// stays scanned.
+const ID_CHAR = /[A-Za-z0-9:%/._~-]/;
+const T3_ID = /^(?:t3-(?:thread|citation):\/\/|mcp(?::|%3A)launch(?::|%3A)|scheduled-task:|run:thread:|message:(?:mcp|provider):|turn-item:|(?:thread:)?delegated-task:)/i;
+const T3_ID_KEY = /"(?:[a-z]+(?:Thread|Run|Message|Item|Task|Project|Environment)|thread|project|run|message|item|task|environment)Id\\?"[ \t]*:[ \t]*\\?"$/;
 
 export function entropy(value: string): number {
   const counts = new Map<string, number>();
@@ -94,11 +100,20 @@ export function inProcessSpans(text: string): Span[] {
   return [...assignmentSpans(text), ...urlPasswordSpans(text), ...explicitSpans(text), ...entropySpans(text)];
 }
 
+function isT3Identifier(text: string, span: Span): boolean {
+  let start = span.start;
+  while (start > 0 && ID_CHAR.test(text[start - 1])) start--;
+  let end = span.end;
+  while (end < text.length && ID_CHAR.test(text[end])) end++;
+  return T3_ID.test(text.slice(start, end)) || T3_ID_KEY.test(text.slice(Math.max(0, span.start - 64), span.start));
+}
+
 // Exemptions: a span is not a secret when it is a git SHA in git output, an
-// integrity hash in a lockfile, or one of the gateway's own placeholders.
+// integrity hash in a lockfile, a T3 Code identifier, or one of the gateway's own placeholders.
 export function isExempt(text: string, span: Span, gitContext: boolean): boolean {
   const value = text.slice(span.start, span.end);
   if (value.includes('⟦SECRET_')) return true;
+  if (isT3Identifier(text, span)) return true;
   const lineStart = text.lastIndexOf('\n', span.start - 1) + 1;
   const lineEnd = text.indexOf('\n', span.end);
   const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);

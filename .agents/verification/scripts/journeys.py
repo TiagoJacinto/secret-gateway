@@ -516,6 +516,32 @@ def j_exemptions_and_formats(ctx):
         ])
         sent = upstream.last()['body']['messages'][1]['content'][0]['content']
         checks.append(ensure(sent == git_output, 'a git SHA in git output is exempt'))
+
+        thread_hex = hashlib.sha256(b'synthetic-t3-thread').hexdigest()
+        t3_output = '\n'.join([
+            f'threadId mcp:launch:{thread_hex}',
+            f'<t3-thread://v2/{uuid_value}/mcp:launch:{thread_hex}>',
+            f'`scheduled-task:command:mcp:{uuid_value}:schedule-task:goal-start-2026-11-01`',
+            f'{{"projectId":"{uuid_value}","runId":"run:thread:mcp%3Alaunch%3A{thread_hex}:ordinal:1"}}',
+        ])
+        t3_secrets = '\n'.join([
+            f'{{"tokenId":"{uuid_value}"}}',
+            f't3-citation://v1/{uuid_value}/thread?text={unknown}',
+        ])
+        upstream.clear()
+        messages_request(gw, [
+            {'role': 'assistant', 'content': [{'type': 'tool_use', 'id': 'toolu_t3', 'name': 'mcp__t3-code__t3_thread_read',
+                                               'input': {'threadId': f'mcp:launch:{thread_hex}'}}]},
+            {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_t3',
+                                          'content': t3_output + '\n' + t3_secrets}]},
+        ])
+        body = upstream.last()['body']['messages']
+        sent = body[1]['content'][0]['content']
+        checks.append(ensure(sent.startswith(t3_output), 'T3 thread, run, task and link identifiers are exempt'))
+        checks.append(ensure(body[0]['content'][0]['input']['threadId'] == f'mcp:launch:{thread_hex}',
+                             'a T3 identifier in a tool input is exempt'))
+        checks.append(ensure(f'"tokenId":"{uuid_value}"' not in sent, 'a UUID under a non-T3 key stays masked'))
+        checks.append(ensure(unknown not in sent, 'a token in a T3 link query stays masked'))
     return checks
 
 
