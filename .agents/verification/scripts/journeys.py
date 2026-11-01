@@ -545,6 +545,58 @@ def j_exemptions_and_formats(ctx):
     return checks
 
 
+def j_exemption_file(ctx):
+    """Exemptions live in exemptions.json and the `exempt` CLI edits it. The running gateway applies edits without a restart."""
+    checks = []
+    upstream = ctx['upstream']
+    value = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d'
+    text = f'ticket acme-ref:{value} opened'
+
+    def exempt(gw, *args):
+        env = dict(os.environ, GATEWAY_DATA_DIR=str(gw.data_dir))
+        return subprocess.run(['bun', 'run', 'src/exempt.ts', *args], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    def forwarded(gw, message=text):
+        upstream.clear()
+        status, _, _ = messages_request(gw, [user(message)])
+        ensure(status == 200, f'exemption request returned {status}')
+        return value in forwarded_text(upstream)
+
+    with gateway(upstream.url, env=ctx['env']) as gw:
+        checks.append(ensure(not forwarded(gw), 'an identifier with no exemption is masked'))
+        added = exempt(gw, 'add', 'prefix', 'acme-ref:', '--note', 'journey')
+        checks.append(ensure(added.returncode == 0, 'the CLI adds a prefix'))
+        checks.append(ensure(forwarded(gw), 'an added prefix applies to the next request without a restart'))
+        listing = exempt(gw, 'list').stdout
+        checks.append(ensure('prefix\tacme-ref:\tjourney' in listing and 'mcp:launch:' in listing,
+                             'the list shows the added entry and the seed entries'))
+        checks.append(ensure(oct((gw.data_dir / 'exemptions.json').stat().st_mode & 0o777) == '0o600',
+                             'the exemptions file has mode 0600'))
+        removed = exempt(gw, 'remove', 'prefix', 'acme-ref:')
+        checks.append(ensure(removed.returncode == 0 and not forwarded(gw),
+                             'a removed prefix is masked again without a restart'))
+        for args, label in ((('add', 'prefix', 'abc'), 'a prefix under 6 characters'),
+                            (('add', 'key', 'password'), 'a key named like a credential'),
+                            (('add', 'prefix', 'two words'), 'a prefix with a space'),
+                            (('remove', 'prefix', 'acme-ref:'), 'removing an absent entry')):
+            checks.append(ensure(exempt(gw, *args).returncode != 0, f'the CLI refuses {label}'))
+        exempt(gw, 'add', 'prefix', 'acme-ref:')
+        checks.append(ensure(forwarded(gw), 'the prefix is exempt again before the file is broken'))
+        (gw.data_dir / 'exemptions.json').write_text('{ not json')
+        checks.append(ensure(forwarded(gw), 'an invalid file keeps the previous lists'))
+        log = gw.log_path.read_text()
+        checks.append(ensure('exemptions not loaded, keeping the previous lists' in log and value not in log,
+                             'the log names the problem and holds no value'))
+    broken = Path(tempfile.mkdtemp(prefix='gateway-journey-')) / 'data'
+    REGISTRY['roots'].append(broken.parent)
+    broken.mkdir(mode=0o700)
+    (broken / 'exemptions.json').write_text('{ not json')
+    with gateway(upstream.url, data_dir=broken, env=ctx['env']) as fresh:
+        checks.append(ensure(not forwarded(fresh, f'thread mcp:launch:{value}'),
+                             'an invalid file at startup exempts nothing, not even the seed entries'))
+    return checks
+
+
 def j_tool_references(ctx):
     upstream = ctx['upstream']
     name = 'mcp__computer-use-linux__list_windows'
@@ -901,6 +953,7 @@ JOURNEYS = [
     ('detection-fixtures', j_detection_fixtures),
     ('canonical-forms', j_canonical_forms),
     ('exemptions-and-formats', j_exemptions_and_formats),
+    ('exemption-file', j_exemption_file),
     ('tool-references', j_tool_references),
     ('identity-restart', j_identity_restart),
     ('review', j_review),

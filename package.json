@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/main.ts",
+    "exempt": "bun run src/exempt.ts",
     "check:secrets": "gitleaks detect --redact --exit-code 1 --no-banner --log-opts=--all"
   }
 }

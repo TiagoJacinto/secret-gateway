@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { loadConfig } from './config.ts';
 import { loadIdentityKey } from './identity.ts';
 import { AnswerStore } from './store.ts';
+import { ExemptionFile, exemptionsPath } from './exemptions.ts';
 import { ExternalScanner, providerScanner } from './scanner.ts';
 import { Masker } from './masker.ts';
 import { ReviewSurface } from './review.ts';
@@ -37,6 +38,7 @@ const log = (line: string) => {
 };
 
 const scanner = new ExternalScanner(providerScanner(config.scannerBinary));
+const exemptions = new ExemptionFile(exemptionsPath(config.dataDir), log);
 const vault = new SecretVault();
 const review = new ReviewSurface({
   store,
@@ -59,6 +61,7 @@ const masker = new Masker({
   store,
   vault,
   scanner,
+  exemptions: () => exemptions.current(),
   revealUrl: (identity) => review.revealUrl(identity),
   now,
   onPending: (item) => {

@@ -37,7 +37,7 @@ Uses the running gateway on port 8788, the existing ChatGPT login, and real mode
 | `HOST` | Listen address; must be loopback or the gateway refuses to start | `127.0.0.1` |
 | `PORT` | Listen port | `8787` |
 | `UPSTREAM_BASE_URL` | Forward target (fake upstream in checks) | `https://api.anthropic.com` |
-| `GATEWAY_DATA_DIR` | Identity key and answers database | `~/.local/share/secret-gateway` |
+| `GATEWAY_DATA_DIR` | Identity key, answers database and `exemptions.json` | `~/.local/share/secret-gateway` |
 | `GATEWAY_SCANNER_BINARY` | Provider scanner (Betterleaks) | `.tools/bin/betterleaks` |
 | `GATEWAY_COMMAND` | Alternative launch command for the checks | `bun run start` |
 
@@ -56,6 +56,7 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | `detection-fixtures` | Every positive fixture (48) masked at the HTTP boundary; every negative (8) forwarded unchanged; git SHA exempt only in git output |
 | `canonical-forms` | Plain, quoted and padded, percent-encoded, and base64 copies share one placeholder |
 | `exemptions-and-formats` | UUID, JWT, base64 blob, and unknown random token masked; tool-use and tool-result history masked; gateway placeholders not re-masked; git SHA exempt; T3 thread, run, task and link identifiers exempt in tool results and tool inputs; a UUID under a non-T3 key and a token in a T3 link query stay masked |
+| `exemption-file` | A prefix added with `bun run exempt` applies to the next request without a restart; a removed prefix is masked again; the list shows added and seed entries; the file has mode 0600; the CLI refuses a short prefix, a prefix with a space, a credential-named key and an absent entry; an invalid file keeps the previous lists and the log names the problem without a value; an invalid file at startup exempts nothing |
 | `tool-references` | Valid tool references pass through; names are scanned; malformed references are withheld |
 | `identity-restart` | Placeholder stable across restart; identity key mode 0600 and data directory mode 0700; deleted key gives a new identity and asks again |
 | `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal reports the value is not in memory; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |

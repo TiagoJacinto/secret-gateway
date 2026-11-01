@@ -17,7 +17,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 ## What it does
 
 - Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
-- Leaves T3 Code identifiers unmasked: IDs that start with `mcp:launch:`, `scheduled-task:`, `run:thread:`, `message:mcp:`, `message:provider:`, `turn-item:` or `delegated-task:`, `t3-thread://` and `t3-citation://` links up to their `?`, and values of T3 ID keys such as `"threadId":` and `"projectId":`. Agents pass these back to T3 tools.
+- Leaves identifiers and keys on the exemption lists unmasked. See Exemptions.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
 - Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again.
@@ -63,6 +63,24 @@ alias claude-masked='ANTHROPIC_BASE_URL=http://127.0.0.1:8787 HTTPS_PROXY=http:/
 ```
 
 Then start a session with `claude-masked`. The base URL sends requests to the gateway. The proxy settings send any other connection to port 9, where nothing should listen, so a direct connection to the API fails. Port 9 must have nothing listening on this machine. In one live check on 2026-10-30, this alias gave a masked reply with the gateway running. With the gateway down, it made no remote connection. The alias without the proxy settings did connect to the API host (see Limits).
+
+## Exemptions
+
+Some values match the masking rules but are routing data, such as the T3 Code thread and task IDs an agent passes back to T3 tools. `exemptions.json` in the data directory lists what stays unmasked:
+
+- A **prefix** exempts a value inside an identifier that starts with it, such as `mcp:launch:`. An identifier ends at any character outside letters, digits and `: % / . _ ~ -`, so a link's query text after `?` stays scanned.
+- A **key** exempts the value after that name, such as `"threadId":`.
+
+The gateway creates the file on first start with the T3 Code entries, then the file is the source of truth. The gateway re-reads it on the next request after it changes, so no restart is needed. If the file is invalid, the gateway keeps the previous lists (none at startup) and logs the reason. The file holds no secret values. For one value, use **Not a secret** on the review page.
+
+```sh
+bun run exempt list
+bun run exempt add prefix acme-ref: --note "vendor ticket IDs"
+bun run exempt add key ticketId
+bun run exempt remove prefix acme-ref:
+```
+
+The command refuses a prefix under 6 characters and a key named like a credential (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL, DATABASE_URL), because their values would be unmasked. Set `GATEWAY_DATA_DIR` to edit another data directory.
 
 ## Review detections
 

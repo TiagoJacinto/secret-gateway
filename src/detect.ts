@@ -1,3 +1,5 @@
+import type { Exemptions } from './exemptions.ts';
+
 // In-process detection layers: name-based assignments, URL passwords, explicit formats,
 // and entropy. Provider-pattern findings come from the external scanner (see scanner.ts).
 
@@ -5,7 +7,7 @@ export type Span = { start: number; end: number };
 
 const ASSIGNMENT = /(["']?-*[A-Za-z_][\w.-]*["']?)[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|`([^`\r\n]*)`|([^\s"'`,;}\])]+))/dg;
 // AUTH matches Authorization but not Author.
-const NAME_KEYWORD = /KEY|TOKEN|SECRET|PASSWORD|PASS|AUTH(?!OR(?!IZATION))|CREDENTIAL|DATABASE_URL/i;
+export const NAME_KEYWORD = /KEY|TOKEN|SECRET|PASSWORD|PASS|AUTH(?!OR(?!IZATION))|CREDENTIAL|DATABASE_URL/i;
 const SCHEME_WORDS = /^(bearer|basic)$/i;
 const URL_PASSWORD = /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s:/@]+:([^\s@/]+)@/dg;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
@@ -14,12 +16,8 @@ const TOKEN = /[A-Za-z0-9+/_-]{20,}={0,2}/g;
 const PADDED_BASE64 = /^[A-Za-z0-9+/]{20,}={1,2}$/;
 const ENTROPY_FLOOR = 3.3;
 const SKIPPED_VALUES = /^(true|false|null|none|undefined)$/i;
-// T3 Code identifiers (thread, run, message and scheduled-task IDs, thread links) are routing data the
-// agent passes back to T3 tools. An identifier is one run of ID_CHAR; `?` ends it, so link query text
-// stays scanned.
-const ID_CHAR = /[A-Za-z0-9:%/._~-]/;
-const T3_ID = /^(?:t3-(?:thread|citation):\/\/|mcp(?::|%3A)launch(?::|%3A)|scheduled-task:|run:thread:|message:(?:mcp|provider):|turn-item:|(?:thread:)?delegated-task:)/i;
-const T3_ID_KEY = /"(?:[a-z]+(?:Thread|Run|Message|Item|Task|Project|Environment)|thread|project|run|message|item|task|environment)Id\\?"[ \t]*:[ \t]*\\?"$/;
+// One identifier is a run of ID_CHAR. `?` ends it, so link query text stays scanned.
+export const ID_CHAR = /[A-Za-z0-9:%/._~-]/;
 
 export function entropy(value: string): number {
   const counts = new Map<string, number>();
@@ -100,20 +98,25 @@ export function inProcessSpans(text: string): Span[] {
   return [...assignmentSpans(text), ...urlPasswordSpans(text), ...explicitSpans(text), ...entropySpans(text)];
 }
 
-function isT3Identifier(text: string, span: Span): boolean {
+// Exemption lists (see exemptions.ts): a span inside an identifier that starts with a listed prefix,
+// or the value of a listed key, is routing data and not a credential.
+function inExemptedContext(text: string, span: Span, exemptions: Exemptions): boolean {
   let start = span.start;
   while (start > 0 && ID_CHAR.test(text[start - 1])) start--;
   let end = span.end;
   while (end < text.length && ID_CHAR.test(text[end])) end++;
-  return T3_ID.test(text.slice(start, end)) || T3_ID_KEY.test(text.slice(Math.max(0, span.start - 64), span.start));
+  const identifier = text.slice(start, end).toLowerCase();
+  if (exemptions.prefixes.some((prefix) => identifier.startsWith(prefix))) return true;
+  const before = text.slice(Math.max(0, span.start - 80), span.start);
+  return exemptions.keys.some((key) => key.test(before));
 }
 
 // Exemptions: a span is not a secret when it is a git SHA in git output, an
-// integrity hash in a lockfile, a T3 Code identifier, or one of the gateway's own placeholders.
-export function isExempt(text: string, span: Span, gitContext: boolean): boolean {
+// integrity hash in a lockfile, covered by the exemption lists, or one of the gateway's own placeholders.
+export function isExempt(text: string, span: Span, gitContext: boolean, exemptions: Exemptions): boolean {
   const value = text.slice(span.start, span.end);
   if (value.includes('⟦SECRET_')) return true;
-  if (isT3Identifier(text, span)) return true;
+  if (inExemptedContext(text, span, exemptions)) return true;
   const lineStart = text.lastIndexOf('\n', span.start - 1) + 1;
   const lineEnd = text.indexOf('\n', span.end);
   const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
