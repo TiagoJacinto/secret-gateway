@@ -551,6 +551,7 @@ def j_exemption_file(ctx):
     upstream = ctx['upstream']
     value = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d'
     text = f'ticket acme-ref:{value} opened'
+    suffixed = f'ticket {value}-xq9ticket opened'
 
     def exempt(gw, *args):
         env = dict(os.environ, GATEWAY_DATA_DIR=str(gw.data_dir))
@@ -564,24 +565,42 @@ def j_exemption_file(ctx):
 
     with gateway(upstream.url, env=ctx['env']) as gw:
         checks.append(ensure(not forwarded(gw), 'an identifier with no exemption is masked'))
-        added = exempt(gw, 'add', 'prefix', 'acme-ref:', '--note', 'journey')
-        checks.append(ensure(added.returncode == 0, 'the CLI adds a prefix'))
-        checks.append(ensure(forwarded(gw), 'an added prefix applies to the next request without a restart'))
+        added = exempt(gw, 'add', 'pattern', 'acme-ref:.*', '--note', 'journey')
+        checks.append(ensure(added.returncode == 0, 'the CLI adds a pattern'))
+        checks.append(ensure(forwarded(gw), 'an added pattern applies to the next request without a restart'))
         listing = exempt(gw, 'list').stdout
-        checks.append(ensure('prefix\tacme-ref:\tjourney' in listing and 'mcp:launch:' in listing,
+        checks.append(ensure('pattern\tacme-ref:.*\tjourney' in listing and 'pattern\tscheduled-task:.*' in listing,
                              'the list shows the added entry and the seed entries'))
         checks.append(ensure(oct((gw.data_dir / 'exemptions.json').stat().st_mode & 0o777) == '0o600',
                              'the exemptions file has mode 0600'))
-        removed = exempt(gw, 'remove', 'prefix', 'acme-ref:')
+        checks.append(ensure(not forwarded(gw, f'ticket other-ref:{value} opened'),
+                             'a pattern matches the whole identifier, so another identifier stays masked'))
+        checks.append(ensure(not forwarded(gw, suffixed), 'a suffix pattern is not yet listed'))
+        exempt(gw, 'add', 'pattern', '.*-xq9ticket')
+        checks.append(ensure(forwarded(gw, suffixed), 'a regex with a leading wildcard matches the end of an identifier'))
+        removed = exempt(gw, 'remove', 'pattern', 'acme-ref:.*')
         checks.append(ensure(removed.returncode == 0 and not forwarded(gw),
-                             'a removed prefix is masked again without a restart'))
-        for args, label in ((('add', 'prefix', 'abc'), 'a prefix under 6 characters'),
+                             'a removed pattern is masked again without a restart'))
+        exempt(gw, 'add', 'pattern', 'acme-ref:[0-9a-f]{8}')
+        checks.append(ensure(not forwarded(gw), 'a shape pattern does not match a longer identifier that only starts like it'))
+        exempt(gw, 'add', 'pattern', 'acme-ref:[0-9a-f-]{36}')
+        checks.append(ensure(forwarded(gw), 'a shape pattern matches the identifier it describes'))
+        exempt(gw, 'remove', 'pattern', 'acme-ref:[0-9a-f-]{36}')
+        exempt(gw, 'remove', 'pattern', 'acme-ref:[0-9a-f]{8}')
+        for args, label in ((('add', 'pattern', '[a-z0-9]+'), 'a pattern that matches a credential-shaped token'),
+                            (('add', 'pattern', '[0-9a-f-]{36}'), 'a pattern that matches any UUID'),
+                            (('add', 'pattern', '.*'), 'a bare wildcard'),
+                            (('add', 'pattern', '(a+)+b'), 'a quantifier on a group'),
+                            (('add', 'pattern', '(?=x)acme-ref'), 'a lookahead'),
+                            (('add', 'pattern', '(acme)\\1'), 'a backreference'),
+                            (('add', 'pattern', 'a*a*a*a*b'), 'more than 3 quantifiers'),
+                            (('add', 'pattern', 'acme-('), 'a regular expression that does not compile'),
+                            (('add', 'prefix', 'acme-ref:'), 'the removed prefix kind'),
                             (('add', 'key', 'password'), 'a key named like a credential'),
-                            (('add', 'prefix', 'two words'), 'a prefix with a space'),
-                            (('remove', 'prefix', 'acme-ref:'), 'removing an absent entry')):
+                            (('remove', 'pattern', 'acme-ref:.*'), 'removing an absent entry')):
             checks.append(ensure(exempt(gw, *args).returncode != 0, f'the CLI refuses {label}'))
-        exempt(gw, 'add', 'prefix', 'acme-ref:')
-        checks.append(ensure(forwarded(gw), 'the prefix is exempt again before the file is broken'))
+        exempt(gw, 'add', 'pattern', 'acme-ref:.*')
+        checks.append(ensure(forwarded(gw), 'the pattern is exempt again before the file is broken'))
         (gw.data_dir / 'exemptions.json').write_text('{ not json')
         checks.append(ensure(forwarded(gw), 'an invalid file keeps the previous lists'))
         log = gw.log_path.read_text()

@@ -1,17 +1,18 @@
 // CLI for the exemption lists. The running gateway reloads the file on its next request.
 //   bun run exempt list
-//   bun run exempt add prefix <text> [--note <text>]
+//   bun run exempt add pattern <regex> [--note <text>]
 //   bun run exempt add key <name> [--note <text>]
-//   bun run exempt remove prefix|key <value>
+//   bun run exempt remove pattern|key <value>
 import { loadConfig } from './config.ts';
 import { check, ensureSeeded, exemptionsPath, readEntries, writeEntries, type Exemption } from './exemptions.ts';
 
 const USAGE = `Usage:
   bun run exempt list
-  bun run exempt add prefix <text> [--note <text>]
+  bun run exempt add pattern <regex> [--note <text>]
   bun run exempt add key <name> [--note <text>]
-  bun run exempt remove prefix|key <value>
-A prefix exempts identifiers that start with it. A key exempts the value after that key name.`;
+  bun run exempt remove pattern|key <value>
+A pattern is a case-insensitive regular expression that must match a whole identifier, such as 'mcp:launch:.*'. Quote it.
+A key exempts the value after that key name.`;
 
 function fail(message: string): never {
   console.error(message);
@@ -31,7 +32,7 @@ try {
 if (command === 'list') {
   for (const entry of entries) console.log(`${entry.kind}\t${entry.value}${entry.note ? `\t${entry.note}` : ''}`);
 } else if (command === 'add' || command === 'remove') {
-  if ((kind !== 'prefix' && kind !== 'key') || !value) fail(USAGE);
+  if ((kind !== 'pattern' && kind !== 'key') || !value) fail(USAGE);
   const index = entries.findIndex((entry) => entry.kind === kind && entry.value === value);
   if (command === 'add') {
     const noteAt = rest.indexOf('--note');

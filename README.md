@@ -68,19 +68,19 @@ Then start a session with `claude-masked`. The base URL sends requests to the ga
 
 Some values match the masking rules but are routing data, such as the T3 Code thread and task IDs an agent passes back to T3 tools. `exemptions.json` in the data directory lists what stays unmasked:
 
-- A **prefix** exempts a value inside an identifier that starts with it, such as `mcp:launch:`. An identifier ends at any character outside letters, digits and `: % / . _ ~ -`, so a link's query text after `?` stays scanned.
+- A **pattern** is a case-insensitive JavaScript regular expression that must match a whole identifier, so `mcp:launch:.*` exempts `mcp:launch:` followed by anything, `.*-ticket-[0-9]+` exempts an identifier of that shape, and `ref-[0-9a-f]{8}` does not exempt `ref-` followed by 40 hex digits. An identifier is a run of letters, digits and `: % / . _ ~ -`, so a link's query text after `?` stays scanned, and an identifier over 256 characters is never exempt.
 - A **key** exempts the value after that name, such as `"threadId":`.
 
 The gateway creates the file on first start with the T3 Code entries, then the file is the source of truth. The gateway re-reads it on the next request after it changes, so no restart is needed. If the file is invalid, the gateway keeps the previous lists (none at startup) and logs the reason. The file holds no secret values. For one value, use **Not a secret** on the review page.
 
 ```sh
 bun run exempt list
-bun run exempt add prefix acme-ref: --note "vendor ticket IDs"
+bun run exempt add pattern 'acme-ref:.*' --note "vendor ticket IDs"
 bun run exempt add key ticketId
-bun run exempt remove prefix acme-ref:
+bun run exempt remove pattern 'acme-ref:.*'
 ```
 
-The command refuses a prefix under 6 characters and a key named like a credential (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL, DATABASE_URL), because their values would be unmasked. Set `GATEWAY_DATA_DIR` to edit another data directory.
+Quote a pattern so the shell does not expand it. The command refuses an entry that could unmask credentials or slow every request: a pattern that matches a credential-shaped token (a hex digest, a UUID, a mixed-case token, a prefixed key, base64, a JWT) such as `.*` or `[0-9a-f-]{36}`; a quantifier on a group, a backreference, a lookaround or a named group; more than 3 quantifiers (`* + ? {n,m}`); a pattern over 128 characters or one that does not compile; and a key named like a credential (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL, DATABASE_URL). Set `GATEWAY_DATA_DIR` to edit another data directory.
 
 ## Review detections
 
