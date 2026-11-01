@@ -18,6 +18,8 @@ const ENTROPY_FLOOR = 3.3;
 const SKIPPED_VALUES = /^(true|false|null|none|undefined)$/i;
 // One identifier is a run of ID_CHAR. `?` ends it, so link query text stays scanned.
 export const ID_CHAR = /[A-Za-z0-9:%/._~-]/;
+// A longer run is not an identifier worth exempting: it bounds the work of matching a pattern.
+const MAX_IDENTIFIER = 256;
 
 export function entropy(value: string): number {
   const counts = new Map<string, number>();
@@ -98,15 +100,17 @@ export function inProcessSpans(text: string): Span[] {
   return [...assignmentSpans(text), ...urlPasswordSpans(text), ...explicitSpans(text), ...entropySpans(text)];
 }
 
-// Exemption lists (see exemptions.ts): a span inside an identifier that starts with a listed prefix,
+// Exemption lists (see exemptions.ts): a span inside an identifier that matches a listed pattern,
 // or the value of a listed key, is routing data and not a credential.
 function inExemptedContext(text: string, span: Span, exemptions: Exemptions): boolean {
   let start = span.start;
   while (start > 0 && ID_CHAR.test(text[start - 1])) start--;
   let end = span.end;
   while (end < text.length && ID_CHAR.test(text[end])) end++;
-  const identifier = text.slice(start, end).toLowerCase();
-  if (exemptions.prefixes.some((prefix) => identifier.startsWith(prefix))) return true;
+  if (end - start <= MAX_IDENTIFIER) {
+    const identifier = text.slice(start, end);
+    if (exemptions.patterns.some((pattern) => pattern.test(identifier))) return true;
+  }
   const before = text.slice(Math.max(0, span.start - 80), span.start);
   return exemptions.keys.some((key) => key.test(before));
 }
