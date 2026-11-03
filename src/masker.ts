@@ -1,6 +1,6 @@
 // Masking core: decides what each request reveals to the provider, and builds the per-request
-// restore table. Only identities and answers are persisted in the store. Masked values are kept
-// in the in-memory vault, for the review page only. The vault also keeps the line each value last appeared in.
+// restore table. Identities and answers are kept in the answers store. Masked values, their appearances
+// and the line each value last appeared in go to the vault, for the review page only.
 // Screenshots are not masked: they pass through unchanged by decision, since no local OCR is used.
 import { findHits, type Hit, type Scanner } from './hits.ts';
 import type { TextSlot } from './anthropic.ts';

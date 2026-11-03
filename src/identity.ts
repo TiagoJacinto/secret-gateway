@@ -1,6 +1,7 @@
 // Stable identity for a canonical secret: HMAC-SHA256 under a local random key.
 // The key lives in the data directory with owner-only permissions. Placeholders are
 // derived from the identity, so the same secret gets the same placeholder across restarts.
+// The review token is kept the same way, so reveal links in earlier replies keep working after a restart.
 import { createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +14,16 @@ export function loadIdentityKey(dataDir: string): Buffer {
   const key = readFileSync(path);
   if (key.length !== 32) throw new Error('identity key file is malformed');
   return key;
+}
+
+export function loadReviewToken(dataDir: string): string {
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const path = join(dataDir, 'review.token');
+  if (!existsSync(path)) writeFileSync(path, `${randomBytes(16).toString('hex')}\n`, { mode: 0o600, flag: 'wx' });
+  chmodSync(path, 0o600);
+  const token = readFileSync(path, 'utf8').trim();
+  if (!/^[0-9a-f]{32}$/.test(token)) throw new Error('review token file is malformed');
+  return token;
 }
 
 export function identityOf(key: Buffer, canonical: string): string {

@@ -1,8 +1,7 @@
 // Review surface on the gateway's own port: a local page and JSON endpoints.
 // Items show status, source, length, the last line where the value was referenced, and timestamps.
-// Values are never stored on disk.
-// The reveal page shows a value only from the in-memory vault, and only with the review token.
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+// The reveal page shows a value from the value store, and only with the review token.
+import { timingSafeEqual } from 'node:crypto';
 import type { AnswerStore, Item } from './store.ts';
 import type { Context, SecretVault } from './vault.ts';
 
@@ -21,7 +20,7 @@ function revealBody(contexts: Context[]): string {
     const below = context.below.map(escapeHtml);
     return `<p>${escapeHtml(context.location)}</p>\n<pre>${[...above, line, ...below].join('\n')}</pre>`;
   });
-  return `<p>Held in memory only. Close this page when you are done.</p>
+  return `<p>Stored on this machine. Close this page when you are done.</p>
 <h2>Where it appears</h2>
 ${appearances.join('\n') || '<p>No line was recorded for this value.</p>'}`;
 }
@@ -57,20 +56,22 @@ export class ReviewSurface {
   readonly #hosts: Set<string>;
   readonly #origin: string;
   readonly #onAnswer: (id: string, status: 'secret' | 'not_secret') => void;
-  // Per-process token. Only a page served by this gateway can read it, so other sites cannot answer or reveal.
-  readonly #token = randomBytes(16).toString('hex');
+  // Kept in the data directory. Only a page served by this gateway can read it, so other sites cannot answer, forget or reveal.
+  readonly #token: string;
 
   constructor(options: {
     store: AnswerStore;
     vault: SecretVault;
     now: () => string;
     port: number;
+    token: string;
     onAnswer: (id: string, status: 'secret' | 'not_secret') => void;
   }) {
     this.#store = options.store;
     this.#vault = options.vault;
     this.#now = options.now;
     this.#onAnswer = options.onAnswer;
+    this.#token = options.token;
     this.#hosts = new Set([`127.0.0.1:${options.port}`, `localhost:${options.port}`]);
     this.#origin = `http://127.0.0.1:${options.port}`;
   }
@@ -98,6 +99,9 @@ export class ReviewSurface {
     if (request.method === 'POST' && url.pathname === '/review/answer') {
       return this.#answer(request);
     }
+    if (request.method === 'POST' && url.pathname === '/review/forget') {
+      return this.#forget(request);
+    }
     const reveal = url.pathname.match(/^\/review\/reveal\/([^/]+)$/);
     if (request.method === 'GET' && reveal) {
       return this.#reveal(url, reveal[1]);
@@ -112,7 +116,8 @@ export class ReviewSurface {
     return updated;
   }
 
-  async #answer(request: Request): Promise<Response> {
+  // Checks the origin, token and JSON body that every POST endpoint needs. Returns the body or the refusal.
+  async #post(request: Request): Promise<Response | Record<string, unknown>> {
     const origin = request.headers.get('origin');
     if (origin !== null && origin !== this.#origin) return new Response('forbidden origin', { status: 403 });
     if (!this.#tokenMatches(request.headers.get('x-review-token'))) {
@@ -121,18 +126,33 @@ export class ReviewSurface {
     if (!(request.headers.get('content-type') ?? '').includes('application/json')) {
       return new Response('expected application/json', { status: 415 });
     }
-    let payload: { id?: unknown; status?: unknown };
+    let body: unknown;
     try {
-      payload = await request.json();
+      body = await request.json();
     } catch {
       return new Response('invalid JSON', { status: 400 });
     }
-    if (typeof payload.id !== 'string' || !IDENTITY.test(payload.id)) return new Response('invalid id', { status: 400 });
-    if (typeof payload.status !== 'string' || !ANSWERS.has(payload.status)) {
+    if (typeof body !== 'object' || body === null) return new Response('invalid JSON', { status: 400 });
+    return body as Record<string, unknown>;
+  }
+
+  async #answer(request: Request): Promise<Response> {
+    const body = await this.#post(request);
+    if (body instanceof Response) return body;
+    if (typeof body.id !== 'string' || !IDENTITY.test(body.id)) return new Response('invalid id', { status: 400 });
+    if (typeof body.status !== 'string' || !ANSWERS.has(body.status)) {
       return new Response('invalid status', { status: 400 });
     }
-    const updated = this.answer(payload.id, payload.status as 'secret' | 'not_secret');
+    const updated = this.answer(body.id, body.status as 'secret' | 'not_secret');
     return Response.json({ updated });
+  }
+
+  // Deletes the stored value of an identity. Its status stays.
+  async #forget(request: Request): Promise<Response> {
+    const body = await this.#post(request);
+    if (body instanceof Response) return body;
+    if (typeof body.id !== 'string' || !IDENTITY.test(body.id)) return new Response('invalid id', { status: 400 });
+    return Response.json({ deleted: this.#vault.forget(body.id) });
   }
 
   #reveal(url: URL, id: string): Response {
@@ -145,7 +165,7 @@ export class ReviewSurface {
     };
     const value = this.#vault.valueOf(id);
     if (value === undefined) {
-      const message = '<p>This value is not held in memory. It was lost when the gateway stopped.</p>';
+      const message = '<p>No value is stored for this identity. It was forgotten, or it was seen before values were stored.</p>';
       return new Response(revealPage(message), { status: 404, headers });
     }
     return new Response(revealPage(revealBody(this.#vault.contextsOf(id))), { headers });
@@ -163,15 +183,16 @@ export class ReviewSurface {
       .map((item) => {
         const short = item.id.slice(0, 12);
         const line = this.#vault.lastLineOf(item.id);
-        const reveal =
-          this.#vault.valueOf(item.id) === undefined
-            ? '<span>value not in memory</span>'
-            : `<a href="/review/reveal/${item.id}?token=${this.#token}" target="_blank" rel="noopener noreferrer">Show value</a>`;
+        const stored = this.#vault.valueOf(item.id) !== undefined;
+        const reveal = stored
+          ? `<a href="/review/reveal/${item.id}?token=${this.#token}" target="_blank" rel="noopener noreferrer">Show value</a>
+    <button onclick="forget('${item.id}')">Forget value</button>`
+          : '<span>value not stored</span>';
         return `<tr>
   <td><code>${short}</code></td>
   <td>${item.status}</td>
   <td>${escapeHtml(item.source)}</td>
-  <td class="line">${line === undefined ? '<span>not in memory</span>' : escapeHtml(line)}</td>
+  <td class="line">${line === undefined ? '<span>not stored</span>' : escapeHtml(line)}</td>
   <td>${item.length}</td>
   <td>${escapeHtml(item.firstSeen)}</td>
   <td>
@@ -203,7 +224,7 @@ td.line { overflow-wrap: anywhere; }
 <body>
 <h1>Secret review</h1>
 <p>Pending and masked items stay masked. "Not a secret" shows the value from the next request onward. Earlier parts of each conversation keep their placeholders.
-"Last line" is the last line that referenced the value, with the value shown as its placeholder. "Show value" opens a new page with the value highlighted in the line it came from. Values and lines are held in memory only and are lost when the gateway stops.</p>
+"Last line" is the last line that referenced the value, with the value shown as its placeholder. "Show value" opens a new page with the value highlighted in the line it came from. Values and lines are stored on this machine, in values.sqlite. "Forget value" deletes the stored value and its lines and keeps the status.</p>
 <table>
 <thead><tr><th>ID</th><th>Status</th><th>Source</th><th>Last line</th><th>Length</th><th>First seen</th><th>Answer</th></tr></thead>
 <tbody>
@@ -217,6 +238,15 @@ async function answer(id, status) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-review-token': TOKEN },
     body: JSON.stringify({ id, status }),
+  });
+  if (response.ok) location.reload();
+}
+async function forget(id) {
+  if (!confirm('Delete the stored value and its lines? The status stays.')) return;
+  const response = await fetch('/review/forget', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-review-token': TOKEN },
+    body: JSON.stringify({ id }),
   });
   if (response.ok) location.reload();
 }

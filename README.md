@@ -44,14 +44,14 @@ Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscript
 
 ## Run
 
-Start the gateway in its own terminal. It keeps running until you stop it.
+Start the gateway in its own terminal. It keeps running until you stop it. Ctrl+C or `SIGTERM` stops it, and it writes the pending last lines to `values.sqlite` before it exits.
 
 ```sh
 cd /path/to/secret-gateway
 bun run start
 ```
 
-It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. The same lines go to `gateway.log` in the data directory (mode 0600), When the file passes 10 MB, the gateway moves it to `gateway.log.1` (replacing the previous `.1`) and starts a new one. Each proxied request has one line, for example `POST /v1/messages 200 412ms masked=1 session=3f9a1c2e`. Each new detection (`pending <identity prefix> from <source> (length N)`) and each review answer (`review answer <identity prefix> <status>`) has one line too. Lines hold counts and 8-character identity or session prefixes, never values or message text. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, data in `~/.local/share/secret-gateway` (`identity.key` with mode 0600, `answers.sqlite`). Change them with environment variables, and see the verification README for the full list.
+It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. The same lines go to `gateway.log` in the data directory (mode 0600), When the file passes 10 MB, the gateway moves it to `gateway.log.1` (replacing the previous `.1`) and starts a new one. Each proxied request has one line, for example `POST /v1/messages 200 412ms masked=1 session=3f9a1c2e`. Each new detection (`pending <identity prefix> from <source> (length N)`) and each review answer (`review answer <identity prefix> <status>`) has one line too. Lines hold counts and 8-character identity or session prefixes, never values or message text. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, data in `~/.local/share/secret-gateway`. The data directory holds `identity.key` (mode 0600, the HMAC key), `review.token` (mode 0600, the review token), `answers.sqlite` (statuses and conversation records, no values), `values.sqlite` (mode 0600, the masked values, their appearances and last lines) and `gateway.log` (mode 0600). Change the defaults with environment variables, and see the verification README for the full list.
 
 ## Use Claude Code through the gateway
 
@@ -67,14 +67,18 @@ Then start a session with `claude-masked`. The base URL sends requests to the ga
 
 Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`), the last line, and length.
 
-- **Last line** is the last line where the gateway saw the value. The value appears as its placeholder, with no review link. For text the agent wrote, it is the last line of that response. For text sent to the model, it is the last line of the most recent request that held the value. A value that appears only in a tool call the agent made is recorded when the next request sends that call back. The line is held in memory only. Rows from before a restart show "not in memory". Masked values appear only as placeholders. Other text in the line is shown as sent or written, so a value you answered "Not a secret" can appear there in full.
+- **Last line** is the last line where the gateway saw the value. The value appears as its placeholder, with no review link. For text the agent wrote, it is the last line of that response. For text sent to the model, it is the last line of the most recent request that held the value. A value that appears only in a tool call the agent made is recorded when the next request sends that call back. The line is written to `values.sqlite` every 5 seconds and at shutdown, so it survives a restart. A row with no stored last line shows "not stored". Masked values appear only as placeholders. Other text in the line is shown as sent or written, so a value you answered "Not a secret" can appear there in full.
 
-- **Show value** opens a new page that lists each appearance of the value in the session, labelled with its place (for example `user message text, message 3`). Each appearance shows its line with the value highlighted, the nearest non-empty line above and below it, and the empty lines between. Other masked values in those lines show as placeholders. The page needs the review token, which the review page includes, so only a page from this gateway can open it. The line and value are held in memory only. They are never written to disk, and a restart removes them. Rows from before a restart show "value not in memory".
+- **Show value** opens a new page that lists each appearance of the value in the session, labelled with its place (for example `user message text, message 3`). Each appearance shows its line with the value highlighted, the nearest non-empty line above and below it, and the empty lines between. Other masked values in those lines show as placeholders. The page needs the review token, which the review page includes, so only a page from this gateway can open it. The value and its appearances are stored in plaintext in `values.sqlite` (mode 0600), and they survive a restart. A row with no stored value shows "value not stored". That happens after **Forget value**, or for a value seen before values were stored. Claude Code's transcripts already contain the real values (see Limits).
+
+- **Forget value** deletes the stored value, its appearances and its last line, after a confirmation. The status stays. It does not stop storage: a later request that still sends the value masked stores it again, for example an earlier message that carries it before a "Not a secret" answer.
 
 - **Secret** keeps the value masked.
 - **Not a secret** unmasks the value only in messages that each conversation sends after your answer. Messages sent before it keep their placeholders, so their prompt cache is not rewritten. A conversation is the Claude Code session header plus the system prompt, so a side request with its own system prompt has its own record. The record is kept in the answers database, so a restart does not change it. A conversation that starts after your answer has no earlier messages, so the value is unmasked from its first message.
 
 The page only answers requests from the page itself. Desktop notifications are sent with a link to this page. On this machine, their buttons do not appear (see Limits).
+
+The review token is kept in `review.token` (mode 0600), so reveal links in earlier replies keep working after a restart. To rotate it, stop the gateway, delete `review.token`, and start the gateway again. Old reveal links then stop working.
 
 ## Verify
 
@@ -94,4 +98,5 @@ These run the HTTP-boundary journeys and the scanner benchmark. The commands and
 - Thinking blocks are not changed. Tool definitions are not scanned. Document blocks and URL images are withheld, not scanned.
 - Not covered: other agents, hosted use, and multiple users. Codex has HTTP-boundary checks and a live reply probe; long-running Codex sessions and compaction have not been verified live.
 - Replies written before the link rule above keep any nested links they contain in Claude Code's transcript. The gateway does not rewrite them.
-- Claude Code's own transcripts keep real values, as they did before.
+- **Claude Code's transcripts hold real values.** Tool output that contains a secret goes into Claude Code's transcript files on disk unchanged, because the gateway masks only what it sends upstream. The gateway does not change those files.
+- **The gateway stores masked values in plaintext.** `values.sqlite` in the data directory holds each value, its appearances and its last line, so the review page can show them. Anyone who can read that file, or a backup of it, can read the values. The gateway's logs, notification records, answers store, identity key and evidence hold no values. The `disk-non-disclosure` journey checks that only `values.sqlite` holds them.

@@ -13,6 +13,7 @@ import os
 import random
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -759,12 +760,38 @@ def j_review(ctx):
         checks.append(ensure(status_by_id.get(ids['github']) == 'not_secret'
                              and status_by_id.get(ids['anthropic']) == 'secret',
                              'answers persist across a restart'))
-        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={gw.token()}', headers=gw.host())
-        checks.append(ensure(status == 404 and b'not held in memory' in body and values['github'].encode() not in body,
-                             'after a restart, reveal says the value is not held in memory, with no value'))
+        for name in ('values.sqlite', 'review.token'):
+            mode = os.stat(data / name).st_mode & 0o777
+            checks.append(ensure(mode == 0o600, f'{name} is owner-only (mode {oct(mode)})'))
+        checks.append(ensure(gw.token() == token, 'the review token is the same after a restart'))
+        status, _, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
+        checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
+                             'after a restart, reveal still shows the value highlighted in its line, from the value store'))
         _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
-        checks.append(ensure(b'<td class="line"><span>not in memory</span></td>' in page and values['github'].encode() not in page,
-                             'after a restart, the review table shows no last line, with no value'))
+        checks.append(ensure(f'<td class="line">a ⟦SECRET_{ids["github"][:6]}⟧</td>'.encode() in page
+                             and values['github'].encode() not in page,
+                             'after a restart, the review table still shows the last line, with no value'))
+        status, _, body = http('POST', f'{gw.url}/review/forget', body={'id': ids['github']},
+                               headers={**gw.host(), 'Content-Type': 'application/json'})
+        checks.append(ensure(status == 403, 'forget without the review token is refused'))
+        status, _, _ = http('POST', f'{gw.url}/review/forget', body={'id': ids['github']},
+                            headers={**gw.host(), 'x-review-token': token, 'Origin': 'http://evil.test'})
+        checks.append(ensure(status == 403, 'forget from a foreign origin is refused'))
+        status, _, _ = http('POST', f'{gw.url}/review/forget', body={'id': 'not-an-identity'},
+                            headers={**gw.host(), 'x-review-token': token})
+        checks.append(ensure(status == 400, 'forget with an invalid identity is refused'))
+        status, _, body = http('POST', f'{gw.url}/review/forget', body={'id': ids['github']},
+                               headers={**gw.host(), 'x-review-token': token})
+        checks.append(ensure(status == 200 and json.loads(body)['deleted'] is True, 'forget deletes the stored value'))
+        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={token}', headers=gw.host())
+        checks.append(ensure(status == 404 and b'No value is stored' in body and values['github'].encode() not in body,
+                             'after forget, reveal says no value is stored, with no value'))
+        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        checks.append(ensure(b'<span>value not stored</span>' in page and b'<td class="line"><span>not stored</span></td>' in page
+                             and values['github'].encode() not in page,
+                             'after forget, the review table shows no value and no last line'))
+        checks.append(ensure(status_by_id.get(ids['github']) == 'not_secret',
+                             'forget keeps the answer "Not a secret"'))
         upstream.clear()
         messages_request(gw, history + [{'role': 'assistant', 'content': 'ok'}, user(f'd {values["github"]}')])
         sent = forwarded_text(upstream)
@@ -772,6 +799,9 @@ def j_review(ctx):
         checks.append(ensure(values['github'] in newest and placeholder in sent and sent.count(values['github']) == 1,
                              'after a restart, "Not a secret" still masks messages sent before the answer'))
         checks.append(ensure(values['anthropic'] not in sent, '"Secret" stays masked after a restart'))
+        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={token}', headers=gw.host())
+        checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
+                             'a later request that sends the forgotten value masked stores it again'))
     return checks
 
 
@@ -905,14 +935,18 @@ def j_adapter_independence(ctx):
     return [ensure(not offenders, f'masking core is free of Anthropic message markers (offenders: {offenders or "none"})')]
 
 
+VALUE_STORE_FILES = {'values.sqlite', 'values.sqlite-wal', 'values.sqlite-shm'}
+
+
 def j_disk_non_disclosure(ctx):
-    """Scans every gateway data directory, log, notification record and the evidence folder for each raw value."""
+    """Scans every gateway data directory, log, notification record and the evidence folder for each raw value.
+    The value store is the only file that may hold values, and it must be owner-only and must hold them."""
     needles = set()
     for value in ctx['secrets']:
         needles.add(value)
         needles.add(value[-20:])
     roots = REGISTRY['roots'] + REGISTRY['data_dirs'] + [EVIDENCE]
-    scanned, leaks = 0, []
+    scanned, leaks, store_files, stored, bad_modes = 0, [], 0, 0, []
     for root in roots:
         if not Path(root).exists():
             continue
@@ -921,10 +955,20 @@ def j_disk_non_disclosure(ctx):
                 continue
             scanned += 1
             content = path.read_bytes()
+            if path.name in VALUE_STORE_FILES:
+                store_files += 1
+                mode = path.stat().st_mode & 0o777
+                if mode != 0o600:
+                    bad_modes.append(f'{path.name} {oct(mode)}')
+                if any(needle.encode() in content for needle in needles):
+                    stored += 1
+                continue
             if any(needle.encode() in content for needle in needles):
                 leaks.append(path.name)
     return [ensure(scanned > 0, f'scanned {scanned} files'),
-            ensure(not leaks, f'no raw value on disk, in logs, notifications or evidence (hits: {sorted(set(leaks)) or "none"})')]
+            ensure(not leaks, f'no raw value outside the value store, in logs, notifications, answers or evidence (hits: {sorted(set(leaks)) or "none"})'),
+            ensure(stored > 0, f'the value store holds masked values ({stored} files)'),
+            ensure(not bad_modes, f'value store files are owner-only (mode 0600; problems: {bad_modes or "none"})')]
 
 
 JOURNEYS = [
@@ -943,6 +987,19 @@ JOURNEYS = [
     ('fail-closed', j_fail_closed),
     ('adapter-independence', j_adapter_independence),
 ]
+
+
+# Directories the journeys create with these prefixes. They hold value stores and identity keys, so they are
+# removed after the disk scan. Only paths directly under the system temp folder with these prefixes are removed.
+TEMP_PREFIXES = ('gateway-journey-', 'gateway-identity-', 'gateway-review-')
+
+
+def remove_temporary(paths):
+    temp = Path(tempfile.gettempdir()).resolve()
+    for path in paths:
+        resolved = Path(path).resolve()
+        if resolved.parent == temp and resolved.name.startswith(TEMP_PREFIXES):
+            shutil.rmtree(resolved, ignore_errors=True)
 
 
 def run_journeys():
@@ -988,6 +1045,7 @@ def run_journeys():
     finally:
         upstream.shutdown()
         upstream.server_close()
+        remove_temporary(REGISTRY['roots'] + [path.parent for path in REGISTRY['data_dirs']])
     return results, ctx
 
 

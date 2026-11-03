@@ -3,7 +3,7 @@
 import json
 import threading
 from http.server import ThreadingHTTPServer
-from journeys import UpstreamHandler, gateway, http, ensure, PLACEHOLDER, FIXTURES, case
+from journeys import UpstreamHandler, gateway, http, ensure, PLACEHOLDER, FIXTURES, case, REGISTRY, remove_temporary
 
 
 class Handler(UpstreamHandler):
@@ -90,6 +90,8 @@ def run():
     finally:
         upstream.shutdown()
         upstream.server_close()
+        # The gateway above has stopped by now, so its scratch directory (with its value store) can go.
+        remove_temporary(REGISTRY['roots'])
     print('PASS: Responses masking, tool restoration (JSON and fragmented SSE), fail-closed routes')
 
 

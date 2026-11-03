@@ -37,7 +37,7 @@ Uses the running gateway on port 8788, the existing ChatGPT login, and real mode
 | `HOST` | Listen address; must be loopback or the gateway refuses to start | `127.0.0.1` |
 | `PORT` | Listen port | `8787` |
 | `UPSTREAM_BASE_URL` | Forward target (fake upstream in checks) | `https://api.anthropic.com` |
-| `GATEWAY_DATA_DIR` | Identity key and answers database | `~/.local/share/secret-gateway` |
+| `GATEWAY_DATA_DIR` | Identity key, review token, answers database, value store and log | `~/.local/share/secret-gateway` |
 | `GATEWAY_SCANNER_BINARY` | Provider scanner (Betterleaks) | `.tools/bin/betterleaks` |
 | `GATEWAY_COMMAND` | Alternative launch command for the checks | `bun run start` |
 
@@ -59,14 +59,14 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | `exemptions-and-formats` | UUID, JWT, base64 blob, and unknown random token masked; tool-use and tool-result history masked; gateway placeholders not re-masked; git SHA exempt |
 | `tool-references` | Valid tool references pass through; names are scanned; malformed references are withheld |
 | `identity-restart` | Placeholder stable across restart; identity key mode 0600 and data directory mode 0700; deleted key gives a new identity and asks again |
-| `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; each row shows the last line with the placeholder and no review link, and "not in memory" after restart; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal reports the value is not in memory; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |
+| `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; each row shows the last line with the placeholder and no review link; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal still shows the value and the table still shows its last line with no value, read from `values.sqlite`; `values.sqlite` and `review.token` are mode 0600; forget needs the token, a valid identity and a same-origin request, deletes the stored value and its lines, keeps the status, and leaves no value or last line on the page; a later request that still sends the value masked stores it again; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |
 | `images` | Five screenshots forwarded byte for byte (not masked, by decision); text beside a screenshot still masked; an image given by URL is withheld and not forwarded |
 | `notifications` | Nothing before the 10 s batch window; batch of five gives three item notifications and one summary; item notifications carry Secret and Not a secret actions; rate limit of three per minute; budget returns after a minute; notifications contain no values |
 | `fail-closed` | Upstream unreachable gives 502 without a raw value; scanner missing withholds text; invalid JSON and non-JSON message requests refused; non-loopback HOST refuses to start |
 | `adapter-independence` | Masking core modules contain no Anthropic message markers (story 37 assessment) |
-| `disk-non-disclosure` | No fixture value, or its last 20 characters, in any gateway data file, log, notification record, or the evidence folder |
+| `disk-non-disclosure` | No fixture value, or its last 20 characters, in any gateway file, log, notification record or the evidence folder, except `values.sqlite` with its `-wal` and `-shm` files. The value store must hold the values, and its files must be mode 0600 |
 
-Each journey starts its own gateway processes. Ports are assigned per process, and temporary data is kept until the disk scan.
+Each journey starts its own gateway processes. Ports are assigned per process. Temporary data (value stores, identity keys, logs) is removed after the disk scan, so the scan sees it first.
 
 ## Benchmarks
 
@@ -141,7 +141,8 @@ Result on 2026-10-30: PASS. The reply carried the marker. One Messages request r
 
 | Check | Result |
 | --- | --- |
-| `check.py` (smoke, 15 journeys including `text-links` and `disk-non-disclosure`, Responses check) | PASS. Journey evidence written 2026-11-03 12:15 UTC; no failures listed |
+| `check.py` (smoke, 15 journeys including `review` and `disk-non-disclosure`, Responses check) | PASS at 2026-11-03 13:01 UTC. All 15 journeys pass; `review` has 49 checks. The Responses check passes. An earlier run that day failed `review` after restart, because a group `SIGTERM` could end the gateway before it wrote the last lines. The fix is in the next row |
+| Shutdown on group `SIGTERM` (ad hoc, scratch scripts outside the repository, not kept) | Before the fix in `src/main.ts`: 3 of 4 runs lost the last line. `bun run start` and its child both receive the signal, and `process.once` removed the listener, so a second signal could end the process mid-flush. After the fix (listener kept, shutdown runs once): 6 of 6 group runs and 1 wrapper-only run kept the last line |
 | Link restoration, ad hoc (scratch script outside the repository, not kept) | 11 text cases across 16 fragment sizes. Streamed text matched plain text on both Anthropic and Responses paths: 0 mismatches |
 | `bun build` | Exit 0; bundles 15 modules |
 | Typecheck | Not run. The repository has no `tsconfig.json` |
