@@ -87,7 +87,7 @@ export function collectSlots(body: Block): TextSlot[] {
       continue;
     }
     if (!Array.isArray(message?.content)) continue;
-    const content: unknown[] = message.content;
+    const content: Block[] = message.content;
     content.forEach((block: Block, index) => {
       switch (block?.type) {
         case 'text':
