@@ -28,6 +28,18 @@ python3 .agents/verification/scripts/responses_live_probe.py
 
 Uses the running gateway on port 8788, the existing ChatGPT login, and real model capacity. A temporary verifier accepts only the original synthetic UUID supplied in the prompt. The command prints only a pass/fail report. It is separate from the automated suite. Use `--base-url` to test another Responses listener.
 
+## Live masking sessions
+
+```sh
+python3 .agents/verification/scripts/live_session.py --self-test   # no model call
+python3 .agents/verification/scripts/live_session.py claude        # one live run through claude-masked
+python3 .agents/verification/scripts/live_session.py codex         # one live run through codex-masked
+```
+
+Needs the gateways on ports 8787 and 8788 running (`secret-gateway.service` and `secret-gateway-codex.service`). A live run sends one synthetic `ghp_`-shaped value and writes booleans, counts and file paths to `~/.agents/projects/secret-gateway/goals/issue-1/evidence/live-<tool>-session.json`. It never prints or keeps the value or the reply text. It passes when all of these hold: exit 0; a placeholder appears in the reply; the value is absent from the reply, the new log lines and stderr; a route returns 200; the value store holds the value with mode 0600; and no other file in the store, the scratch folder or the CLI's data directory holds the value. Scratch files go to `TMPDIR` and are removed.
+
+For Codex, the stderr rule first removes only the exact `GITHUB_TOKEN=<value>` line, which is the prompt echo (see Codex echo finding below). Any other occurrence of the value fails.
+
 ## Launch settings
 
 `check.py` starts `bun run start` with fresh temporary data and an assigned loopback port. The gateway reads:
@@ -148,7 +160,34 @@ Result on 2026-10-30: PASS. The reply carried the marker. One Messages request r
 | `bun build` | Exit 0; bundles 15 modules |
 | Typecheck | Not run. The repository has no `tsconfig.json` |
 
-No live probes were run in this check.
+No live probes were run in this check. The live sessions of the same day are in the next section.
+
+## Live sessions (2026-11-03, goal `live-masking-verification`)
+
+| Check | Result |
+| --- | --- |
+| `live_session.py --self-test` | PASS: six cases, no model call |
+| Claude live session, run 1 (14:36 UTC) | FAIL on `placeholder_in_reply` only. Exit 0; both calls 200; no value in reply, log, stderr or other files. This run predates the `reply_chars` field. Evidence: `live-claude-session-run1-fail.json` |
+| Codex live session, run 1 (14:37 UTC) | PASS. The echo line is in stderr; no value appears outside it. Evidence: `live-codex-session.json` |
+| Claude live session, run 2 (14:37 UTC) | PASS. Evidence: `live-claude-session.json` |
+| Earlier runs (13:21 UTC, before the echo rule) | Claude PASS. Codex FAIL on `value_in_stderr` only. Evidence: `live-claude-session-before-rerun.json`, `live-codex-session-before-echo-fix.json` |
+| `check.py` | PASS: smoke, journeys, Responses check. Evidence: `http-smoke.json`, `journeys.json` |
+
+Runs used in this goal: 2 of 2 Claude, 1 of 2 Codex.
+
+The Claude criterion is unstable. With the same script, one run had no placeholder in its reply and the next had one. The cause is not known. The reply text is not kept, by design. `reply_chars` now records the reply length, so a repeat can show whether the reply was empty.
+
+Values forgotten: one synthetic value (length 40) in each store, from the 13:20–13:22 UTC window. Still pending in that window and not confirmed synthetic: four Claude items (lengths 46, 29, 39, 117) and one Codex item (length 132).
+
+Still pending from the 14:36–14:37 runs: two Claude and one Codex synthetic value (length 40). Five other Claude items and twelve other Codex items come from the CLI's own context and are not confirmed synthetic. All of them are left pending.
+
+### Codex echo finding
+
+`codex exec` prints its prompt to stderr as a `user` block, before it calls the provider. So the prompt's `GITHUB_TOKEN=` line appears in stderr. A marker run confirmed the format: the line is `GITHUB_TOKEN=<marker>` with no prefix or trailing text. That run used a closed provider port, so no model was called, and it ended at the 90 s timeout. This is Codex CLI behaviour, not a gateway leak. The stderr rule removes only that line for Codex. Changing the CLI is a follow-up.
+
+### Classification of the 138 masked items: blocked
+
+The 138 count is from `POST /responses 400 masked=138` at 13:17:26 UTC. That request used a rejected model. The log shows 35 new pending items in the 13:17:00–13:17:27 window: 15 `message text` and 20 `request metadata`. The other masked items were not logged as new. The store keeps a source label, a length and a status for each item. It keeps no Betterleaks rule ID and no source path, so the requested grouping cannot be done from stored data. Not done. See Decisions item 7.
 
 ## Coverage gaps and limits
 
@@ -157,7 +196,7 @@ No live probes were run in this check.
 - Scanner-alone recall for Cloudflare, Neon, Google and AWS formats is low. Coverage for those comes from the name and entropy layers in the pipeline. The Google `ya29.` prefix is outside the token charset, so only its random tail is masked.
 - Desktop notification buttons do not appear on this machine. AppArmor profile `/etc/apparmor.d/notify-send` blocks `GetCapabilities`. Notifications are sent as plain notifications, and the recording notifier verifies the action list only. The review page is the working answer path.
 - **Gateway down, plain alias: Claude Code attempts a direct connection to the API host** (strace check, 2026-10-30). It is not known whether a request body was sent. The README alias adds proxy settings. With them, one gateway-down run made no remote connection, and one gateway-running run gave a masked reply. Each is one run. Other HTTPS traffic from Claude Code goes to the closed proxy and fails. Not tested: features that need other HTTPS hosts.
-- Thinking blocks are not scanned or changed, since the model only saw placeholders. Tool definitions are not scanned.
+- Thinking blocks are not scanned or changed, since the model only saw placeholders. Tool definitions are not scanned on the Messages path. The Responses path scans string fields under `tools`, `metadata` and `prompt`, labelled `request metadata`. Its effect on false positives is not measured.
 - Unsupported content blocks (documents, URL images, other types) are withheld, not scanned. Tool references in tool results are supported when they contain only a type and a string tool name; their names are scanned.
 - Benchmarks and journeys do not measure the desktop UI or long-running Claude/Codex sessions.
 
@@ -175,6 +214,7 @@ Open for the user:
 
 5. Optional cleanup: run `rm -rf .tools/rapidocr-venv` and `rm -rf ~/.cache/kingfisher` from the repository root, or decline.
 6. Restore policy for placeholders is moot for screenshots now, since no screenshot values are masked.
+7. Classification of the 138 masked items needs one choice: (a) group by source label only, using the 35 logged items; (b) store the Betterleaks rule ID and source path per item, a change under `src/` that needs approval; or (c) re-scan a captured request body, which stores raw values and needs approval.
 
 ## Cleanup
 
