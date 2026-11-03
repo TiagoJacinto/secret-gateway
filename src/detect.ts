@@ -4,6 +4,8 @@ import type { Exemptions } from './exemptions.ts';
 // and entropy. Provider-pattern findings come from the external scanner (see scanner.ts).
 
 export type Span = { start: number; end: number };
+// A span with the rule that found it: a scanner rule ID such as `github-pat`, or an `in-process:` layer name.
+export type RuledSpan = Span & { rule: string };
 
 const ASSIGNMENT = /(["']?-*[A-Za-z_][\w.-]*["']?)[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|`([^`\r\n]*)`|([^\s"'`,;}\])]+))/dg;
 // AUTH matches Authorization but not Author.
@@ -43,8 +45,8 @@ function groupSpan(match: RegExpExecArray, groups: number[]): Span | null {
 }
 
 // Name rule: a KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL or DATABASE_URL name assigned a value.
-function assignmentSpans(text: string): Span[] {
-  const spans: Span[] = [];
+function assignmentSpans(text: string): RuledSpan[] {
+  const spans: RuledSpan[] = [];
   for (const match of text.matchAll(ASSIGNMENT)) {
     if (!NAME_KEYWORD.test(match[1])) continue;
     let span = groupSpan(match, [2, 3, 4, 5]);
@@ -57,46 +59,46 @@ function assignmentSpans(text: string): Span[] {
       const start = span.end + following[0].length - following[1].length;
       span = { start, end: start + following[1].length };
     }
-    spans.push(span);
+    spans.push({ ...span, rule: 'in-process:name' });
   }
   return spans;
 }
 
 // URL rule: the password part of scheme://user:password@host.
-function urlPasswordSpans(text: string): Span[] {
-  const spans: Span[] = [];
+function urlPasswordSpans(text: string): RuledSpan[] {
+  const spans: RuledSpan[] = [];
   for (const match of text.matchAll(URL_PASSWORD)) {
     const span = groupSpan(match, [1]);
-    if (span && !text.slice(span.start, span.end).startsWith('$')) spans.push(span);
+    if (span && !text.slice(span.start, span.end).startsWith('$')) spans.push({ ...span, rule: 'in-process:url-password' });
   }
   return spans;
 }
 
 // Explicit format rule: UUIDs, JWTs and padded base64 stay masked, whatever their entropy.
-function explicitSpans(text: string): Span[] {
-  const spans: Span[] = [];
-  for (const pattern of [UUID, JWT]) {
+function explicitSpans(text: string): RuledSpan[] {
+  const spans: RuledSpan[] = [];
+  for (const [pattern, rule] of [[UUID, 'in-process:uuid'], [JWT, 'in-process:jwt']] as const) {
     for (const match of text.matchAll(pattern)) {
-      spans.push({ start: match.index, end: match.index + match[0].length });
+      spans.push({ start: match.index, end: match.index + match[0].length, rule });
     }
   }
   return spans;
 }
 
 // Entropy rule: random-looking tokens of 20 or more characters.
-function entropySpans(text: string): Span[] {
-  const spans: Span[] = [];
+function entropySpans(text: string): RuledSpan[] {
+  const spans: RuledSpan[] = [];
   for (const match of text.matchAll(TOKEN)) {
     const token = match[0];
     const randomLooking = /[A-Za-z]/.test(token) && /[0-9]/.test(token) && entropy(token) >= ENTROPY_FLOOR;
     if (randomLooking || PADDED_BASE64.test(token)) {
-      spans.push({ start: match.index, end: match.index + token.length });
+      spans.push({ start: match.index, end: match.index + token.length, rule: 'in-process:entropy' });
     }
   }
   return spans;
 }
 
-export function inProcessSpans(text: string): Span[] {
+export function inProcessSpans(text: string): RuledSpan[] {
   return [...assignmentSpans(text), ...urlPasswordSpans(text), ...explicitSpans(text), ...entropySpans(text)];
 }
 

@@ -6,7 +6,7 @@ import type { Exemptions } from './exemptions.ts';
 import { findHits, type Hit, type Scanner } from './hits.ts';
 import type { TextSlot } from './anthropic.ts';
 import { identityOf, PLACEHOLDER, placeholderFor } from './identity.ts';
-import type { AnswerStore, Status } from './store.ts';
+import type { AnswerStore, Origin, Status } from './store.ts';
 import type { Context, SecretVault } from './vault.ts';
 
 export type PendingItem = { id: string; source: string; length: number };
@@ -71,13 +71,13 @@ export class Masker {
     }
 
     const statuses = new Map<string, Status>();
-    const statusOf = (identity: string, source: string, length: number): Status => {
+    const statusOf = (identity: string, source: string, length: number, origin: Origin): Status => {
       const known = statuses.get(identity) ?? store.statusOf(identity);
       if (known) {
         statuses.set(identity, known);
         return known;
       }
-      if (store.ensurePending(identity, source, length, now())) onPending({ id: identity, source, length });
+      if (store.ensurePending(identity, source, length, now(), origin)) onPending({ id: identity, source, length });
       statuses.set(identity, 'pending');
       return 'pending';
     };
@@ -103,7 +103,7 @@ export class Masker {
         const hits: (Hit & { identity: string })[] = [];
         for (const hit of textHits![index]) {
           const identity = identityOf(key, hit.secret);
-          const status = statusOf(identity, slot.source, hit.secret.length);
+          const status = statusOf(identity, slot.source, hit.secret.length, { rule: hit.rule, location: slot.location });
           if (status === 'not_secret' && slot.order >= store.unmaskPoint(identity, conversation.key)) continue;
           maskedSecrets.set(identity, hit.secret);
           hits.push({ ...hit, identity });

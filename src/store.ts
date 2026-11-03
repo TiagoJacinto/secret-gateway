@@ -1,11 +1,14 @@
 // Answers store: one row per secret identity. Holds status, source description, length and
-// timestamps. It also holds, per conversation, the message count of its last request and the unmask
-// points of "Not a secret" answers. It never holds a secret value: conversation keys are digests.
+// timestamps, and the rule and location of first sighting. It also holds, per conversation, the
+// message count of its last request and the unmask points of "Not a secret" answers. It never holds
+// a secret value: conversation keys are digests.
 import { Database } from 'bun:sqlite';
 import { chmodSync, existsSync } from 'node:fs';
 
 export type Status = 'pending' | 'secret' | 'not_secret';
 export type Item = { id: string; status: Status; source: string; length: number; firstSeen: string; updatedAt: string };
+// Where an identity was first seen: the scanner rule or in-process layer, and the slot location in the request.
+export type Origin = { rule: string; location: string };
 
 export class AnswerStore {
   readonly #db: Database;
@@ -21,6 +24,11 @@ export class AnswerStore {
         length INTEGER NOT NULL,
         first_seen TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS origins (
+        id TEXT PRIMARY KEY,
+        rule TEXT NOT NULL,
+        location TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS conversations (
         key TEXT PRIMARY KEY,
@@ -41,12 +49,17 @@ export class AnswerStore {
     return row?.status;
   }
 
-  // Records a new identity as pending. Returns true when the identity is new.
-  ensurePending(id: string, source: string, length: number, now: string): boolean {
-    const result = this.#db
-      .query('INSERT OR IGNORE INTO items (id, status, source, length, first_seen, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, 'pending', source, length, now, now);
-    return result.changes === 1;
+  // Records a new identity as pending, with its origin. Returns true when the identity is new.
+  // Identities stored before origins were recorded have no origin row.
+  ensurePending(id: string, source: string, length: number, now: string, origin: Origin): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db
+        .query('INSERT OR IGNORE INTO items (id, status, source, length, first_seen, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, 'pending', source, length, now, now);
+      if (result.changes !== 1) return false;
+      this.#db.query('INSERT INTO origins (id, rule, location) VALUES (?, ?, ?)').run(id, origin.rule, origin.location);
+      return true;
+    })();
   }
 
   answer(id: string, status: Exclude<Status, 'pending'>, now: string): boolean {

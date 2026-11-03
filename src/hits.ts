@@ -3,11 +3,11 @@
 import { canonicalOf, inProcessSpans, isExempt, type Span } from './detect.ts';
 import type { Exemptions } from './exemptions.ts';
 
-export type ScanFinding = { secret: string; line: number };
+export type ScanFinding = { secret: string; line: number; rule: string };
 export interface Scanner {
   scan(text: string): Promise<ScanFinding[]>;
 }
-export type Hit = Span & { secret: string };
+export type Hit = Span & { secret: string; rule: string };
 export type Segment = { text: string; gitContext: boolean };
 
 // Candidate encoded forms: base64 or percent-encoded runs. Underscore and '=' are excluded so that a name
@@ -65,7 +65,7 @@ export async function findHits(segments: Segment[], scanner: Scanner, exemptions
   const ownerAt = (position: number): Owner | undefined =>
     owners.findLast((owner) => owner.offset <= position);
 
-  const found: { owner: Owner; span: Span }[] = [];
+  const found: { owner: Owner; span: Span; rule: string }[] = [];
   for (const finding of await scanner.scan(probe)) {
     if (!finding.secret) continue;
     const from = lineStarts[finding.line - 1] ?? 0;
@@ -75,24 +75,24 @@ export async function findHits(segments: Segment[], scanner: Scanner, exemptions
     const owner = ownerAt(position);
     if (!owner) continue;
     const start = position - owner.offset;
-    found.push({ owner, span: { start, end: start + finding.secret.length } });
+    found.push({ owner, span: { start, end: start + finding.secret.length }, rule: finding.rule });
   }
   for (const owner of owners) {
-    for (const span of inProcessSpans(owner.text)) found.push({ owner, span });
+    for (const span of inProcessSpans(owner.text)) found.push({ owner, span, rule: span.rule });
   }
 
   // A decoded variant maps back to the encoded token that produced it, so the token is what gets masked.
   // Variant hits win over plain hits on the same token, keeping one canonical identity per secret.
   const variantHits: Hit[][] = segments.map(() => []);
   const plainHits: Hit[][] = segments.map(() => []);
-  for (const { owner, span } of found) {
+  for (const { owner, span, rule } of found) {
     const segment = segments[owner.segment];
     const secret = canonicalOf(owner.text.slice(span.start, span.end));
     if (secret === '') continue;
     const segmentSpan = owner.token ?? span;
     if (isExempt(segment.text, segmentSpan, segment.gitContext, exemptions)) continue;
     const bucket = owner.token ? variantHits : plainHits;
-    bucket[owner.segment].push({ start: segmentSpan.start, end: segmentSpan.end, secret });
+    bucket[owner.segment].push({ start: segmentSpan.start, end: segmentSpan.end, secret, rule });
   }
 
   return segments.map((segment, index) => {

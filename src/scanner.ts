@@ -9,20 +9,24 @@ export type ScannerCommand = { argv: string[]; parse: (stdout: string) => ScanFi
 export function parseGitleaksJson(stdout: string): ScanFinding[] {
   const trimmed = stdout.trim();
   if (trimmed === '') return [];
-  const findings = JSON.parse(trimmed) as { Secret?: string; Match?: string; StartLine?: number }[];
+  const findings = JSON.parse(trimmed) as { Secret?: string; Match?: string; StartLine?: number; RuleID?: string }[];
   return (findings ?? []).map((finding) => ({
     secret: finding.Secret || finding.Match || '',
     line: finding.StartLine ?? 1,
+    rule: finding.RuleID || 'unknown',
   }));
 }
 
 // Kingfisher JSON Lines: one line per finding with the matched value in finding.snippet.
+// Rule IDs are not read from this output. Only bench/scanner.ts uses this parser, and it stores nothing.
 export function parseKingfisherJsonl(stdout: string): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const line of stdout.split('\n')) {
     if (line.trim() === '') continue;
     const record = JSON.parse(line) as { finding?: { snippet?: string; line?: number } };
-    if (record.finding?.snippet) findings.push({ secret: record.finding.snippet, line: record.finding.line ?? 1 });
+    if (record.finding?.snippet) {
+      findings.push({ secret: record.finding.snippet, line: record.finding.line ?? 1, rule: 'unknown' });
+    }
   }
   return findings;
 }

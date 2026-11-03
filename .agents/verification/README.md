@@ -187,7 +187,33 @@ Still pending from the 14:36–14:37 runs: two Claude and one Codex synthetic va
 
 ### Classification of the 138 masked items: blocked
 
-The 138 count is from `POST /responses 400 masked=138` at 13:17:26 UTC. That request used a rejected model. The log shows 35 new pending items in the 13:17:00–13:17:27 window: 15 `message text` and 20 `request metadata`. The other masked items were not logged as new. The store keeps a source label, a length and a status for each item. It keeps no Betterleaks rule ID and no source path, so the requested grouping cannot be done from stored data. Not done. See Decisions item 7.
+Status: blocked. The 138 masked items predate the origins change below, so their rule and location are not stored. They cannot be classified from stored data. Classifying new items needs a gateway that runs the change, which needs a restart. The restart needs the user's approval.
+
+The 138 count is from `POST /responses 400 masked=138` at 13:17:26 UTC. That request used a rejected model. The log shows 35 new pending items in the 13:17:00–13:17:27 window: 15 `message text` and 20 `request metadata`. The other masked items were not logged as new. Grouping by source label alone (option a) was not chosen. See Decisions item 7.
+
+### Origins of new items (approved src change, 2026-11-03)
+
+The user chose option (b) of the classification question. When the gateway first sees an item, it writes one row to the `origins` table of `answers.sqlite`:
+
+- `rule`: the Betterleaks rule ID, such as `github-pat`, or an in-process layer name: `in-process:name`, `in-process:url-password`, `in-process:uuid`, `in-process:jwt` or `in-process:entropy`.
+- `location`: the slot location in the request, such as `tool result from Bash, message 3`. It is a position label, not a file path. Tool inputs are not stored.
+
+The row holds no value. It records the first sighting only. The table is created on open, with no migration. Items stored before this change have no row.
+
+Verification, 2026-11-03. The scratch scripts are not committed. They printed only rule names, counts and booleans:
+- A check with the real Betterleaks binary on a synthetic GitHub token, an `API_KEY=` value and a UUID. The token got `github-pat`, the value got `in-process:name`, and the UUID got `in-process:uuid`.
+- A store check: a second write of the same item adds no row, and an item stored before the change gets no row.
+- An end-to-end check: one masked request to a fresh gateway stored `github-pat` at `tool result from Bash, message 3`.
+- `check.py`: PASS.
+- Not verified: the running services still run `df05576`. They write origins only after a restart, which is outside this goal.
+
+Read-only query, once the gateways run this code. Run it on `~/.local/share/secret-gateway-codex/answers.sqlite` and `~/.local/share/secret-gateway/answers.sqlite`:
+
+```sql
+SELECT o.rule, o.location, i.status, count(*) AS items
+FROM origins o JOIN items i ON i.id = o.id
+GROUP BY o.rule, o.location, i.status;
+```
 
 ## Coverage gaps and limits
 
@@ -214,7 +240,9 @@ Open for the user:
 
 5. Optional cleanup: run `rm -rf .tools/rapidocr-venv` and `rm -rf ~/.cache/kingfisher` from the repository root, or decline.
 6. Restore policy for placeholders is moot for screenshots now, since no screenshot values are masked.
-7. Classification of the 138 masked items needs one choice: (a) group by source label only, using the 35 logged items; (b) store the Betterleaks rule ID and source path per item, a change under `src/` that needs approval; or (c) re-scan a captured request body, which stores raw values and needs approval.
+Decided by the user (2026-11-03):
+
+7. Classification: option (b), store the Betterleaks rule ID and source location per item. Implemented; see Origins of new items. Option (a) and option (c) were not chosen. The 138 items cannot be classified, since they predate the change.
 
 ## Cleanup
 
