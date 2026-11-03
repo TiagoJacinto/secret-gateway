@@ -14,7 +14,7 @@ import uuid
 
 def run():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base-url', default='http://127.0.0.1:8788')
+    parser.add_argument('--base-url', default='http://127.0.0.1:8787/codex')
     parser.add_argument('--model', default='gpt-6.1-sol')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='responses-live-probe-') as directory:

@@ -8,7 +8,12 @@ from journeys import UpstreamHandler, gateway, http, ensure, PLACEHOLDER, FIXTUR
 
 class Handler(UpstreamHandler):
     received = []
+    paths = []
     omit_content_type = False
+
+    def do_GET(self):
+        self.paths.append(self.path)
+        super().do_GET()
 
     def _send(self, status, content_type, payload):
         if not self.omit_content_type:
@@ -41,18 +46,34 @@ class Handler(UpstreamHandler):
             self._send(200, 'application/json', json.dumps({'output': output}).encode())
 
 
+class Anthropic(UpstreamHandler):
+    paths = []
+
+    def do_GET(self):
+        self.paths.append(self.path)
+        super().do_GET()
+
+
 def run():
     cases = json.loads((FIXTURES / 'scanner-cases.json').read_text())
     secret = case(cases, 'github-pat-env-assignment')['secrets'][0]
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    anthropic = ThreadingHTTPServer(('127.0.0.1', 0), Anthropic)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    threading.Thread(target=anthropic.serve_forever, daemon=True).start()
     try:
-        with gateway(f'http://127.0.0.1:{upstream.server_port}', env={'GATEWAY_PROTOCOL': 'responses'}) as gw:
+        # Requests under /codex go to the Responses upstream without the prefix. Other requests go to Anthropic.
+        env = {'RESPONSES_UPSTREAM_BASE_URL': f'http://127.0.0.1:{upstream.server_port}'}
+        with gateway(f'http://127.0.0.1:{anthropic.server_port}', env=env) as gw:
+            status, _, _ = http('GET', gw.url + '/codex/models')
+            ensure(status == 200 and Handler.paths == ['/models'], 'Codex GET reaches the Responses upstream without the prefix')
+            status, _, _ = http('GET', gw.url + '/models')
+            ensure(status == 200 and Anthropic.paths == ['/models'], 'other GET reaches the Anthropic upstream')
             # result verification
             for omit_type, stream, path in [
                 (omit_type, stream, path)
                 for omit_type in (False, True)
-                for stream, path in [(False, '/responses'), (True, '/responses'), (False, '/responses/compact')]
+                for stream, path in [(False, '/codex/responses'), (True, '/codex/responses'), (False, '/codex/responses/compact')]
             ]:
                 Handler.omit_content_type = omit_type
                 body = {'instructions': 'Handle values safely.', 'stream': stream,
@@ -80,16 +101,18 @@ def run():
                 expected_type = 'text/event-stream' if stream else 'application/json'
                 ensure(expected_type in headers.get('content-type', ''), 'response media type set')
             count = len(Handler.received)
-            for path, body, headers in [('/unsupported', {'input': secret}, {}),
-                                        ('/responses', b'not json', {'Content-Type': 'application/json'}),
-                                        ('/responses', {'input': secret}, {'Content-Encoding': 'zstd'}),
-                                        ('/responses', {'input': [{'type': 'unknown', 'value': secret}]}, {})]:
+            for path, body, headers in [('/codex/unsupported', {'input': secret}, {}),
+                                        ('/codex/responses', b'not json', {'Content-Type': 'application/json'}),
+                                        ('/codex/responses', {'input': secret}, {'Content-Encoding': 'zstd'}),
+                                        ('/codex/responses', {'input': [{'type': 'unknown', 'value': secret}]}, {})]:
                 status, _, _ = http('POST', gw.url + path, body, headers)
                 ensure(status >= 400, 'unsupported request refused')
             ensure(len(Handler.received) == count, 'refused requests never reach upstream')
     finally:
         upstream.shutdown()
         upstream.server_close()
+        anthropic.shutdown()
+        anthropic.server_close()
         # The gateway above has stopped by now, so its scratch directory (with its value store) can go.
         remove_temporary(REGISTRY['roots'])
     print('PASS: Responses masking, tool restoration (JSON and fragmented SSE), fail-closed routes')

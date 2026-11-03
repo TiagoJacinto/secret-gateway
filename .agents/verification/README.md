@@ -26,7 +26,7 @@ Evidence never contains values. Archive milestone copies separately.
 python3 .agents/verification/scripts/responses_live_probe.py
 ```
 
-Uses the running gateway on port 8788, the existing ChatGPT login, and real model capacity. A temporary verifier accepts only the original synthetic UUID supplied in the prompt. The command prints only a pass/fail report. It is separate from the automated suite. Use `--base-url` to test another Responses listener.
+Uses the running gateway on port 8787 under `/codex` (the default `--base-url`), the existing ChatGPT login, and real model capacity. A temporary verifier accepts only the original synthetic UUID supplied in the prompt. The command prints only a pass/fail report. It is separate from the automated suite. Use `--base-url` to test another Responses listener.
 
 ## Live masking sessions
 
@@ -36,7 +36,7 @@ python3 .agents/verification/scripts/live_session.py claude        # one live ru
 python3 .agents/verification/scripts/live_session.py codex         # one live run through codex-masked
 ```
 
-Needs the gateways on ports 8787 and 8788 running (`secret-gateway.service` and `secret-gateway-codex.service`). A live run sends one synthetic `ghp_`-shaped value and writes booleans, counts and file paths to `~/.agents/projects/secret-gateway/goals/issue-1/evidence/live-<tool>-session.json`. It never prints or keeps the value or the reply text. It passes when all of these hold: exit 0; a placeholder appears in the reply; the value is absent from the reply, the new log lines and stderr; a route returns 200; the value store holds the value with mode 0600; and no other file in the store, the scratch folder or the CLI's data directory holds the value. Scratch files go to `TMPDIR` and are removed.
+Needs the gateway on port 8787 running (`secret-gateway.service`). Codex runs through it under `/codex`. A live run sends one synthetic `ghp_`-shaped value and writes booleans, counts and file paths to `~/.agents/projects/secret-gateway/goals/issue-1/evidence/live-<tool>-session.json`. It never prints or keeps the value or the reply text. It passes when all of these hold: exit 0; a placeholder appears in the reply; the value is absent from the reply, the new log lines and stderr; a route returns 200; the value store holds the value with mode 0600; and no other file in the store, the scratch folder or the CLI's data directory holds the value. Scratch files go to `TMPDIR` and are removed.
 
 For Codex, the stderr rule first removes only the exact `GITHUB_TOKEN=<value>` line, which is the prompt echo (see Codex echo finding below). Any other occurrence of the value fails.
 
@@ -48,7 +48,8 @@ For Codex, the stderr rule first removes only the exact `GITHUB_TOKEN=<value>` l
 | --- | --- | --- |
 | `HOST` | Listen address; must be loopback or the gateway refuses to start | `127.0.0.1` |
 | `PORT` | Listen port | `8787` |
-| `UPSTREAM_BASE_URL` | Forward target (fake upstream in checks) | `https://api.anthropic.com` |
+| `UPSTREAM_BASE_URL` | Anthropic forward target for Claude Code (fake upstream in checks) | `https://api.anthropic.com` |
+| `RESPONSES_UPSTREAM_BASE_URL` | Responses forward target for Codex, reached under the `/codex` prefix (fake upstream in checks) | `https://chatgpt.com/backend-api/codex` |
 | `GATEWAY_DATA_DIR` | Identity key, review token, answers database, value store, `exemptions.json` and log | `~/.local/share/secret-gateway` |
 | `GATEWAY_SCANNER_BINARY` | Provider scanner (Betterleaks) | `.tools/bin/betterleaks` |
 | `GATEWAY_COMMAND` | Alternative launch command for the checks | `bun run start` |
@@ -218,6 +219,18 @@ SELECT o.rule, o.location, i.status, count(*) AS items
 FROM origins o JOIN items i ON i.id = o.id
 GROUP BY o.rule, o.location, i.status;
 ```
+
+### One gateway process (code merged, not deployed)
+
+Approved by the user on 2026-11-03. One process now serves both clients on port 8787:
+- Requests under `/codex` (Codex) use the Responses adapter and `RESPONSES_UPSTREAM_BASE_URL`. The prefix is removed before the upstream sees the path, so `/codex/responses` reaches `<upstream>/responses`.
+- All other requests (Claude Code) use the Anthropic adapter and `UPSTREAM_BASE_URL`, as before.
+- The review page is `http://127.0.0.1:8787/review` for both.
+- The launcher `scripts/codex-masked` points at `http://127.0.0.1:8787/codex`. The unit `scripts/secret-gateway-codex.service` is removed from the branch.
+- `responses_check.py` checks the routing: a `GET /codex/models` reaches the Responses upstream as `/models`, and a `GET /models` reaches the Anthropic upstream.
+- `check.py`: PASS. `tsc` on `src/`: no errors. One error in `bench/scanner.ts` (`Candidate` lacks `rule`), left as it was. It comes from the `rule` field added in `f751ac6`.
+
+Not done yet, so the running services still use the two-process code at `f751ac6`. Deploying needs the store decision (the two data directories hold different identity keys, and old placeholders can be restored only from their own store).
 
 ## Coverage gaps and limits
 

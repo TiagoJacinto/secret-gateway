@@ -3,8 +3,8 @@
 import type { ReviewSurface } from './review.ts';
 import type { Masker } from './masker.ts';
 import { restoreJson, restoreSse, restoreResponsesJson, restoreResponsesSse, type Restore } from './unmask.ts';
-import { addPromptNote, conversationOf } from './anthropic.ts';
-import { addResponseNote, responseConversation } from './responses.ts';
+import { addPromptNote, collectSlots, conversationOf } from './anthropic.ts';
+import { addResponseNote, collectResponseSlots, responseConversation } from './responses.ts';
 
 const MESSAGE_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens']);
 const HOP_BY_HOP = new Set([
@@ -22,10 +22,10 @@ const HOP_BY_HOP = new Set([
 ]);
 
 export type GatewayDeps = {
-  protocol?: 'anthropic' | 'responses';
   masker: Masker;
   review: ReviewSurface;
   upstreamBaseUrl: string;
+  responsesUpstreamBaseUrl: string;
   log: (line: string) => void;
   testControl?: (ms: number) => void;
 };
@@ -56,15 +56,20 @@ export function createHandler(deps: GatewayDeps): (request: Request) => Promise<
   };
 }
 
+// Codex sends its Responses requests under this prefix. Claude Code sends Messages requests without it.
+const CODEX_PREFIX = '/codex';
+
 async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: RequestStats): Promise<Response> {
-  const responses = deps.protocol === 'responses';
-  if (responses && request.method !== 'GET' && !['/responses', '/responses/compact'].includes(url.pathname)) return refuse(400, 'unsupported Responses route; not forwarded');
+  const responses = url.pathname === CODEX_PREFIX || url.pathname.startsWith(`${CODEX_PREFIX}/`);
+  // The path the upstream receives. The Codex prefix is removed.
+  const path = responses ? url.pathname.slice(CODEX_PREFIX.length) || '/' : url.pathname;
+  if (responses && request.method !== 'GET' && !['/responses', '/responses/compact'].includes(path)) return refuse(400, 'unsupported Responses route; not forwarded');
   if (request.headers.has('content-encoding')) return refuse(400, 'compressed requests are not supported; not forwarded');
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   let body: string | Uint8Array | null = hasBody ? new Uint8Array(await request.arrayBuffer()) : null;
   let restore: Restore | undefined;
   let responseStream = false;
-  const isMessages = responses ? ['/responses', '/responses/compact'].includes(url.pathname) : MESSAGE_PATHS.has(url.pathname);
+  const isMessages = responses ? ['/responses', '/responses/compact'].includes(path) : MESSAGE_PATHS.has(path);
   if (isMessages && (!hasBody || body === null || body.length === 0)) return refuse(400, 'message body required');
 
   if (body !== null && body.length > 0) {
@@ -84,7 +89,7 @@ async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: Reque
       if (isObject && ('messages' in record || isMessages)) {
         try {
           const conversation = responses ? responseConversation(request.headers, record) : conversationOf(request.headers, record);
-          const masked = await deps.masker.mask(record, conversation);
+          const masked = await deps.masker.mask(record, conversation, responses ? collectResponseSlots : collectSlots);
           if (isMessages) (responses ? addResponseNote : addPromptNote)(masked.body);
           body = JSON.stringify(masked.body);
           restore = masked.restore;
@@ -108,7 +113,7 @@ async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: Reque
 
   let upstream: Response;
   try {
-    upstream = await fetch(`${deps.upstreamBaseUrl}${url.pathname}${url.search}`, {
+    upstream = await fetch(`${responses ? deps.responsesUpstreamBaseUrl : deps.upstreamBaseUrl}${path}${url.search}`, {
       method: request.method,
       headers,
       body,

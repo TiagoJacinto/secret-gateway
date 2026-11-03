@@ -37,8 +37,8 @@ SESSIONS = {
     },
     'codex': {
         'model': 'gpt-5.6-terra',
-        'data': HOME / '.local/share/secret-gateway-codex',
-        'route': '/responses',
+        'data': HOME / '.local/share/secret-gateway',
+        'route': '/codex/responses',
         'command': lambda prompt, out, work: ['codex-masked', 'exec', '--ephemeral', '--skip-git-repo-check',
                                               '-m', 'gpt-5.6-terra', '-o', str(out), '-C', str(work), prompt],
         'agent_dirs': [HOME / '.codex'],

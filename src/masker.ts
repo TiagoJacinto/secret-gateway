@@ -21,8 +21,6 @@ export type Options = {
   revealUrl: (identity: string) => string;
   now: () => string;
   onPending: (item: PendingItem) => void;
-  // Format adapter: turns a request body into text slots. The core never reads the body itself.
-  collectSlots: (body: Record<string, any>) => TextSlot[];
 };
 
 const TEXT_WITHHELD = '[content withheld by secret-gateway: the secret scanner was unavailable, so it was not sent]';
@@ -58,8 +56,10 @@ export class Masker {
     this.#options.store.setUnmaskPoints(identity, points);
   }
 
-  async mask(body: Record<string, any>, conversation: Conversation): Promise<MaskedRequest> {
-    const { key, store, vault, scanner, exemptions, revealUrl, now, onPending, collectSlots } = this.#options;
+  // collectSlots is the format adapter for this request: it turns the body into text slots.
+  // The core never reads the body itself.
+  async mask(body: Record<string, any>, conversation: Conversation, collectSlots: (body: Record<string, any>) => TextSlot[]): Promise<MaskedRequest> {
+    const { key, store, vault, scanner, exemptions, revealUrl, now, onPending } = this.#options;
     const textSlots = collectSlots(body);
     store.recordConversation(conversation.key, conversation.count);
     for (const slot of textSlots) {

@@ -11,8 +11,6 @@ import { Masker } from './masker.ts';
 import { ReviewSurface } from './review.ts';
 import { ManualClock, NotifySendNotifier, RecordingNotifier, ReviewNotifier, SystemClock } from './notify.ts';
 import { createHandler } from './gateway.ts';
-import { collectSlots } from './anthropic.ts';
-import { collectResponseSlots } from './responses.ts';
 import { LAST_LINE_FLUSH_MS, SecretVault } from './vault.ts';
 import { ValueStore } from './values.ts';
 
@@ -72,14 +70,13 @@ const masker = new Masker({
     log(`pending ${item.id.slice(0, 8)} from ${item.source} (length ${item.length})`);
     notifier.enqueue(item);
   },
-  collectSlots: config.protocol === 'responses' ? collectResponseSlots : collectSlots,
 });
 
 const handler = createHandler({
-  protocol: config.protocol,
   masker,
   review,
   upstreamBaseUrl: config.upstreamBaseUrl,
+  responsesUpstreamBaseUrl: config.responsesUpstreamBaseUrl,
   log,
   testControl: config.testControl && clock instanceof ManualClock ? (ms) => clock.advance(ms) : undefined,
 });
@@ -88,6 +85,7 @@ const server = Bun.serve({ hostname: config.host, port: config.port, fetch: hand
 log(`secret-gateway listening on http://${config.host}:${server.port}`);
 log(`review page: ${review.url}`);
 log(`upstream: ${config.upstreamBaseUrl}`);
+log(`responses upstream (Codex, path prefix /codex): ${config.responsesUpstreamBaseUrl}`);
 
 // Last lines reach values.sqlite every few seconds, and again at shutdown.
 const flushTimer = setInterval(() => vault.flush(), LAST_LINE_FLUSH_MS);
