@@ -52,6 +52,7 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | --- | --- |
 | `streaming` | Raw secret absent upstream; tool input restored across 5-character fragments; streamed text blocks link each placeholder to its review page; event sequence unchanged apart from the restored tool input and text links |
 | `non-streaming` | Tool input restored for the client; text block links the placeholder to its review page |
+| `text-links` | Placeholder inside link text, a link destination, or a bare URL stays plain; elsewhere it links to its review page; same exact text when placeholders split across 5-character fragments; review row shows the last line with the placeholder and no review link |
 | `prompt-note` | Original system prompt kept; note covers placeholder use, no "missing" warnings, masking of all text including accessibility trees, handling credentials through placeholders, verification, unmasked screenshots and text over screenshots, no screenshot while a credential is on screen, no deletion or revocation without approval; note added without a system prompt |
 | `detection-fixtures` | Every positive fixture (48) masked at the HTTP boundary; every negative (8) forwarded unchanged; git SHA exempt only in git output |
 | `canonical-forms` | Plain, quoted and padded, percent-encoded, and base64 copies share one placeholder |
@@ -59,7 +60,7 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | `exemption-file` | A regex pattern added with `bun run exempt` applies to the next request without a restart; it must match a whole identifier (a leading wildcard works, a longer identifier that only starts like it does not); a removed pattern is masked again; the list shows added and seed entries; the file has mode 0600; the CLI refuses a pattern that matches a credential-shaped token, a UUID-wide pattern, a bare `.*`, a quantifier on a group, a lookahead, a backreference, more than 3 quantifiers, an invalid regex, the old `prefix` kind, a credential-named key and an absent entry; an invalid file keeps the previous lists and the log names the problem without a value; an invalid file at startup exempts nothing |
 | `tool-references` | Valid tool references pass through; names are scanned; malformed references are withheld |
 | `identity-restart` | Placeholder stable across restart; identity key mode 0600 and data directory mode 0700; deleted key gives a new identity and asks again |
-| `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal reports the value is not in memory; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |
+| `review` | Pending items stay masked and do not block; listing and page contain no values; token, Origin and Host checks; "Not a secret" unmasks only messages sent after the answer, per conversation, keeps earlier messages masked, and keeps that record across restart; "Secret" stays masked; "Show value" links appear; the reveal page serves the value only with the token, as no-store and no-referrer, with each appearance labelled by its place in the session, the value highlighted in its line, the nearest non-empty line above and below with empty lines kept, and other masked values in that window as placeholders; each row shows the last line with the placeholder and no review link, and "not in memory" after restart; reveal refuses a missing, wrong or foreign-Host request; answers persist across restart; after restart reveal reports the value is not in memory; review identities match HMAC of the values under the key file; a reply's reveal link is the identity and token of its placeholder; a reply with that link, sent back as history, is reduced to its placeholder, with no token upstream and no new review item |
 | `images` | Five screenshots forwarded byte for byte (not masked, by decision); text beside a screenshot still masked; an image given by URL is withheld and not forwarded |
 | `notifications` | Nothing before the 10 s batch window; batch of five gives three item notifications and one summary; item notifications carry Secret and Not a secret actions; rate limit of three per minute; budget returns after a minute; notifications contain no values |
 | `fail-closed` | Upstream unreachable gives 502 without a raw value; scanner missing withholds text; invalid JSON and non-JSON message requests refused; non-loopback HOST refuses to start |
@@ -137,9 +138,21 @@ Result on 2026-10-30: PASS. The reply carried the marker. One Messages request r
 | Scanner benchmark | Betterleaks provider rules: pipeline recall 47/48; scanner-alone recall 0.521; p95 86 ms (pass). All-rules Betterleaks p95 319 ms (fails). Kingfisher p95 718 ms (fails) |
 | Local OCR (removed) | Not used. Last results kept as history in `evidence/ocr-benchmark.json`: Tesseract 2/7 exact keys, RapidOCR 4/7 |
 
+## Results (2026-11-03)
+
+| Check | Result |
+| --- | --- |
+| `check.py` (smoke, 15 journeys including `text-links` and `disk-non-disclosure`, Responses check) | PASS. Journey evidence written 2026-11-03 12:15 UTC; no failures listed |
+| Link restoration, ad hoc (scratch script outside the repository, not kept) | 11 text cases across 16 fragment sizes. Streamed text matched plain text on both Anthropic and Responses paths: 0 mismatches |
+| `bun build` | Exit 0; bundles 15 modules |
+| Typecheck | Not run. The repository has no `tsconfig.json` |
+
+No live probes were run in this check.
+
 ## Coverage gaps and limits
 
 - **Screenshots are not masked (decision, 2026-10-30).** A secret visible in a screenshot reaches the provider. The image also stays in the conversation history. Expected from the Messages API, later requests resend it; this is not verified live.
+- No journey or `responses_check.py` case covers a placeholder inside a link or URL on the Responses path. The ad hoc check in the 2026-11-03 results covers it, and it is not repeatable from the suite.
 - Scanner-alone recall for Cloudflare, Neon, Google and AWS formats is low. Coverage for those comes from the name and entropy layers in the pipeline. The Google `ya29.` prefix is outside the token charset, so only its random tail is masked.
 - Desktop notification buttons do not appear on this machine. AppArmor profile `/etc/apparmor.d/notify-send` blocks `GetCapabilities`. Notifications are sent as plain notifications, and the recording notifier verifies the action list only. The review page is the working answer path.
 - **Gateway down, plain alias: Claude Code attempts a direct connection to the API host** (strace check, 2026-10-30). It is not known whether a request body was sent. The README alias adds proxy settings. With them, one gateway-down run made no remote connection, and one gateway-running run gave a masked reply. Each is one run. Other HTTPS traffic from Claude Code goes to the closed proxy and fails. Not tested: features that need other HTTPS hosts.

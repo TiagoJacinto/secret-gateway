@@ -1,11 +1,15 @@
+import { PLACEHOLDER } from './identity.ts';
+
 // Restores placeholders in responses, for plain JSON and for streamed events. Tool-use inputs get the
 // real value, so the tool can run. Text blocks get a link to the review page, so the user can check
-// the value. A placeholder the request did not mask is left unchanged.
-const PLACEHOLDER = /⟦SECRET_[0-9a-f]{6,64}⟧/g;
+// the value, except where the placeholder already sits in a link or a URL: a link inside a link is not
+// valid markdown, so that placeholder stays plain text. A placeholder the request did not mask is left unchanged.
 const MAX_HELD = 80;
 
 export type Lookup = (placeholder: string) => Promise<string | undefined>;
-export type Restore = { lookup: Lookup; link: Lookup };
+// seen receives each text block as the model wrote it, before any link is added, so the gateway can record
+// the line where a placeholder was last referenced.
+export type Restore = { lookup: Lookup; link: Lookup; seen(text: string): void };
 
 type Format = (placeholder: string, resolved: string) => string;
 
@@ -14,16 +18,75 @@ const rawValue: Format = (_placeholder, value) => value;
 const jsonValue: Format = (_placeholder, value) => JSON.stringify(value).slice(1, -1);
 const reviewLink: Format = (placeholder, url) => `[${placeholder}](${url})`;
 
-async function replaceAll(text: string, resolve: Lookup, format: Format): Promise<string> {
+// Follows markdown link syntax as text is emitted, one character at a time. Tracks whether the next
+// character is inside link text ("[...]"), inside a link destination ("](...)"), or inside an http(s) URL.
+// Only text before a placeholder is needed, so streamed text does not wait for what follows it.
+class LinkState {
+  #textDepth = 0;
+  #destinationDepth = 0;
+  #closedText = false;
+  #url = false;
+  #recent = '';
+  #previous = '';
+
+  inLink(): boolean {
+    return this.#textDepth > 0 || this.#destinationDepth > 0 || this.#url;
+  }
+
+  feed(text: string): void {
+    for (const character of text) this.#step(character);
+  }
+
+  #step(character: string): void {
+    if (character === '\r') return;
+    const closedText = this.#closedText;
+    this.#closedText = false;
+    // A blank line ends the paragraph, and no link continues past it.
+    if (character === '\n' && this.#previous === '\n') {
+      this.#textDepth = 0;
+      this.#destinationDepth = 0;
+    }
+    if (/\s|[<>]/.test(character)) this.#url = false;
+    this.#recent = (this.#recent + character).slice(-8);
+    if (this.#recent.endsWith('http://') || this.#recent.endsWith('https://')) this.#url = true;
+
+    if (this.#destinationDepth > 0) {
+      if (character === '(') this.#destinationDepth++;
+      else if (character === ')') this.#destinationDepth--;
+    } else if (closedText && character === '(') {
+      this.#destinationDepth = 1;
+    } else if (character === '[') {
+      this.#textDepth++;
+    } else if (character === ']' && this.#textDepth > 0) {
+      this.#textDepth--;
+      this.#closedText = this.#textDepth === 0;
+    }
+    this.#previous = character;
+  }
+}
+
+// Replaces each placeholder that has a value. With a LinkState, a placeholder inside a link or URL is kept plain.
+async function replaceAll(text: string, resolve: Lookup, format: Format, links?: LinkState): Promise<string> {
   const resolved = new Map<string, string>();
   for (const placeholder of new Set(text.match(PLACEHOLDER) ?? [])) {
     const value = await resolve(placeholder);
     if (value !== undefined) resolved.set(placeholder, value);
   }
-  return text.replace(PLACEHOLDER, (placeholder) => {
+  let out = '';
+  let cursor = 0;
+  for (const match of text.matchAll(PLACEHOLDER)) {
+    const start = match.index;
+    const plain = text.slice(cursor, start);
+    links?.feed(plain);
+    const placeholder = match[0];
     const value = resolved.get(placeholder);
-    return value === undefined ? placeholder : format(placeholder, value);
-  });
+    out += plain + (value === undefined || links?.inLink() ? placeholder : format(placeholder, value));
+    links?.feed(placeholder);
+    cursor = start + placeholder.length;
+  }
+  const rest = text.slice(cursor);
+  links?.feed(rest);
+  return out + rest;
 }
 
 // Index where an unfinished placeholder starts, or the text length when nothing is pending.
@@ -38,23 +101,25 @@ class PlaceholderStream {
   #held = '';
   readonly #resolve: Lookup;
   readonly #format: Format;
+  readonly #links?: LinkState;
 
-  constructor(resolve: Lookup, format: Format) {
+  constructor(resolve: Lookup, format: Format, links?: LinkState) {
     this.#resolve = resolve;
     this.#format = format;
+    this.#links = links;
   }
 
   async push(fragment: string): Promise<string> {
     const text = this.#held + fragment;
     const cut = pendingStart(text);
     this.#held = text.slice(cut);
-    return replaceAll(text.slice(0, cut), this.#resolve, this.#format);
+    return replaceAll(text.slice(0, cut), this.#resolve, this.#format, this.#links);
   }
 
   async flush(): Promise<string> {
     const rest = this.#held;
     this.#held = '';
-    return replaceAll(rest, this.#resolve, this.#format);
+    return replaceAll(rest, this.#resolve, this.#format, this.#links);
   }
 }
 
@@ -71,7 +136,8 @@ export async function restoreJson(text: string, restore: Restore): Promise<strin
   for (const block of message.content ?? []) {
     if (block?.type === 'tool_use') block.input = await walk(block.input);
     if (block?.type === 'text' && typeof block.text === 'string') {
-      block.text = await replaceAll(block.text, restore.link, reviewLink);
+      restore.seen(block.text);
+      block.text = await replaceAll(block.text, restore.link, reviewLink, new LinkState());
     }
   }
   return JSON.stringify(message);
@@ -81,7 +147,8 @@ async function restoreResponseItem(item: any, restore: Restore): Promise<void> {
   if (item?.type === 'function_call' && typeof item.arguments === 'string') item.arguments = await replaceAll(item.arguments, restore.lookup, jsonValue);
   if (item?.type === 'custom_tool_call' && typeof item.input === 'string') item.input = await replaceAll(item.input, restore.lookup, rawValue);
   for (const part of item?.content ?? []) if (part.type === 'output_text' && typeof part.text === 'string') {
-    part.text = await replaceAll(part.text, restore.link, reviewLink);
+    restore.seen(part.text);
+    part.text = await replaceAll(part.text, restore.link, reviewLink, new LinkState());
   }
 }
 
@@ -106,14 +173,17 @@ export function restoreResponsesSse(upstream: ReadableStream<Uint8Array>, restor
         const type = payload.type;
         const key = `${payload.item_id ?? payload.output_index}:${type?.replace(/\.(delta|done)$/, '')}`;
         if (['response.function_call_arguments.delta', 'response.custom_tool_call_input.delta', 'response.output_text.delta'].includes(type)) {
-          if (!fragments.has(key)) fragments.set(key, new PlaceholderStream(
-            type === 'response.output_text.delta' ? restore.link : restore.lookup,
-            type === 'response.output_text.delta' ? reviewLink : type === 'response.function_call_arguments.delta' ? jsonValue : rawValue));
+          if (!fragments.has(key)) fragments.set(key, type === 'response.output_text.delta'
+            ? new PlaceholderStream(restore.link, reviewLink, new LinkState())
+            : new PlaceholderStream(restore.lookup, type === 'response.function_call_arguments.delta' ? jsonValue : rawValue));
           payload.delta = await fragments.get(key)!.push(payload.delta ?? '');
         }
         if (type === 'response.function_call_arguments.done') payload.arguments = await replaceAll(payload.arguments, restore.lookup, jsonValue);
         if (type === 'response.custom_tool_call_input.done') payload.input = await replaceAll(payload.input, restore.lookup, rawValue);
-        if (type === 'response.output_text.done') payload.text = await replaceAll(payload.text, restore.link, reviewLink);
+        if (type === 'response.output_text.done') {
+          restore.seen(payload.text);
+          payload.text = await replaceAll(payload.text, restore.link, reviewLink, new LinkState());
+        }
         if (payload.item) await restoreResponseItem(payload.item, restore);
         if (payload.response) for (const item of payload.response.output ?? []) await restoreResponseItem(item, restore);
         emit([...lines.filter(line => !line.startsWith('data:')), `data: ${JSON.stringify(payload)}`].join('\n'));
@@ -143,6 +213,8 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
       const reader = upstream.getReader();
       const tools = new Map<number, PlaceholderStream>();
       const texts = new Map<number, PlaceholderStream>();
+      // Text of each block as the model wrote it, before links are added. Recorded when the block ends.
+      const rawTexts = new Map<number, string>();
       const emit = (event: string) => controller.enqueue(encoder.encode(`${event}\n\n`));
 
       const handle = async (event: string) => {
@@ -163,7 +235,8 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
           return emit(withData(parsed));
         }
         if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta' && typeof parsed.delta.text === 'string') {
-          if (!texts.has(index)) texts.set(index, new PlaceholderStream(restore.link, reviewLink));
+          rawTexts.set(index, (rawTexts.get(index) ?? '') + parsed.delta.text);
+          if (!texts.has(index)) texts.set(index, new PlaceholderStream(restore.link, reviewLink, new LinkState()));
           parsed.delta.text = await texts.get(index)!.push(parsed.delta.text);
           return emit(withData(parsed));
         }
@@ -178,6 +251,10 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
                 delta: { type: 'input_json_delta', partial_json: rest },
               })}`);
             }
+          }
+          if (rawTexts.has(index)) {
+            restore.seen(rawTexts.get(index)!);
+            rawTexts.delete(index);
           }
           if (texts.has(index)) {
             const rest = await texts.get(index)!.flush();

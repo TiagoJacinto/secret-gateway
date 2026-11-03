@@ -1,11 +1,11 @@
 // Masking core: decides what each request reveals to the provider, and builds the per-request
 // restore table. Only identities and answers are persisted in the store. Masked values are kept
-// in the in-memory vault, for the review reveal page only.
+// in the in-memory vault, for the review page only. The vault also keeps the line each value last appeared in.
 // Screenshots are not masked: they pass through unchanged by decision, since no local OCR is used.
 import type { Exemptions } from './exemptions.ts';
 import { findHits, type Hit, type Scanner } from './hits.ts';
 import type { TextSlot } from './anthropic.ts';
-import { identityOf, placeholderFor } from './identity.ts';
+import { identityOf, PLACEHOLDER, placeholderFor } from './identity.ts';
 import type { AnswerStore, Status } from './store.ts';
 import type { Context, SecretVault } from './vault.ts';
 
@@ -31,9 +31,11 @@ const TEXT_WITHHELD = '[content withheld by secret-gateway: the secret scanner w
 const REVIEW_LINK = /\[(⟦SECRET_[0-9a-f]{6,64}⟧)\]\(http:\/\/127\.0\.0\.1:\d+\/review\/reveal\/[0-9a-f]{64}\?token=[0-9a-f]{32}\)/g;
 
 // lookup gives the real value for tool inputs. link gives the review page URL for text.
+// seen receives response text as the model wrote it, before links are added, to record last lines.
 export type Restore = {
   lookup(placeholder: string): Promise<string | undefined>;
   link(placeholder: string): Promise<string | undefined>;
+  seen(text: string): void;
 };
 export type MaskedRequest = { body: Record<string, any>; restore: Restore; degraded: boolean; masked: number };
 // Set by the format adapter: which conversation the request belongs to, and its message count.
@@ -113,7 +115,10 @@ export class Masker {
     const placeholders = assignPlaceholders([...maskedSecrets.keys()]);
     for (const { slot, hits } of textPlans) {
       for (const hit of hits) {
-        vault.remember(hit.identity, hit.secret, contextOf(slot, hits, hit, placeholders));
+        const context = contextOf(slot, hits, hit, placeholders);
+        vault.remember(hit.identity, hit.secret, context);
+        // Hits are visited in conversation order, so the last one in the request sets the line.
+        vault.setLastLine(hit.identity, `${context.before}${placeholders.get(hit.identity)!}${context.after}`);
       }
     }
 
@@ -139,6 +144,17 @@ export class Masker {
       link: async (placeholder) => {
         const identity = identityByPlaceholder.get(placeholder);
         return identity === undefined ? undefined : revealUrl(identity);
+      },
+      seen: (text) => {
+        for (const match of text.matchAll(PLACEHOLDER)) {
+          const identity = identityByPlaceholder.get(match[0]);
+          if (identity === undefined) continue;
+          const start = match.index;
+          const end = start + match[0].length;
+          const before = text.slice(lineStartOf(text, start), start).slice(-LINE_CHARS);
+          const after = text.slice(end, lineEndOf(text, end)).slice(0, LINE_CHARS);
+          vault.setLastLine(identity, before + match[0] + after);
+        }
       },
     };
     return { body, restore, degraded, masked: maskedSecrets.size };
