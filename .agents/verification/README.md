@@ -220,7 +220,7 @@ FROM origins o JOIN items i ON i.id = o.id
 GROUP BY o.rule, o.location, i.status;
 ```
 
-### One gateway process (code merged, not deployed)
+### One gateway process (committed as 2ab4327, deployed 2026-11-03)
 
 Approved by the user on 2026-11-03. One process now serves both clients on port 8787:
 - Requests under `/codex` (Codex) use the Responses adapter and `RESPONSES_UPSTREAM_BASE_URL`. The prefix is removed before the upstream sees the path, so `/codex/responses` reaches `<upstream>/responses`.
@@ -230,7 +230,14 @@ Approved by the user on 2026-11-03. One process now serves both clients on port 
 - `responses_check.py` checks the routing: a `GET /codex/models` reaches the Responses upstream as `/models`, and a `GET /models` reaches the Anthropic upstream.
 - `check.py`: PASS. `tsc` on `src/`: no errors. One error in `bench/scanner.ts` (`Candidate` lacks `rule`), left as it was. It comes from the `rule` field added in `f751ac6`.
 
-Not done yet, so the running services still use the two-process code at `f751ac6`. Deploying needs the store decision (the two data directories hold different identity keys, and old placeholders can be restored only from their own store).
+Deployed on 2026-11-03 at 15:17 UTC. The user chose option 1 of the store plan: merge both stores into one, keep the Claude identity key, keep every old ID.
+1. Stopped `secret-gateway.service` and `secret-gateway-codex.service`. No client session was running.
+2. Backed up both data directories to `~/.local/share/secret-gateway-premerge-2026-11-03` (owner-only). The backup holds stored values. Delete it once the merge is accepted.
+3. Merged the Codex stores into `~/.local/share/secret-gateway`. Every ID was kept. Counts: 4013 items, 3 origins, 71 conversations, 62 unmask points, 243 value entries, 544 appearances. Every row from both backups is in the merged store, and the appearance order per identity is kept. The check compared the stores in place and printed PASS/FAIL only.
+4. Set `t3-c0af0a97` to `2ab4327` (detached). Disabled the Codex unit and moved it into the backup directory.
+5. Started `secret-gateway.service`, which listens on 8787. `/review` returns 200, port 8788 is closed, and `GET /codex/models` is logged as `/codex/models 401` from the Responses upstream. The probe sent no credentials.
+
+Not verified: a live Claude or Codex session after the merge. Both live caps are used (2 of 2 each). The old Codex data directory `~/.local/share/secret-gateway-codex` is untouched and no longer read.
 
 ## Coverage gaps and limits
 
