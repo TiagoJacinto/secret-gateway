@@ -168,12 +168,13 @@ No live probes were run in this check. The live sessions of the same day are in 
 | --- | --- |
 | `live_session.py --self-test` | PASS: six cases, no model call |
 | Claude live session, run 1 (14:36 UTC) | FAIL on `placeholder_in_reply` only. Exit 0; both calls 200; no value in reply, log, stderr or other files. This run predates the `reply_chars` field. Evidence: `live-claude-session-run1-fail.json` |
-| Codex live session, run 1 (14:37 UTC) | PASS. The echo line is in stderr; no value appears outside it. Evidence: `live-codex-session.json` |
+| Codex live session, run 1 (14:37 UTC) | PASS. The echo line is in stderr; no value appears outside it. Evidence: `live-codex-session-run1.json` |
+| Codex live session, run 2 (14:58 UTC) | PASS. Exit 0; one route 200 with `masked=121`; the echo line is in stderr and no value appears outside it. It also stored two origin rows (see Origins). Evidence: `live-codex-session.json` |
 | Claude live session, run 2 (14:37 UTC) | PASS. Evidence: `live-claude-session.json` |
 | Earlier runs (13:21 UTC, before the echo rule) | Claude PASS. Codex FAIL on `value_in_stderr` only. Evidence: `live-claude-session-before-rerun.json`, `live-codex-session-before-echo-fix.json` |
 | `check.py` | PASS: smoke, journeys, Responses check. Evidence: `http-smoke.json`, `journeys.json` |
 
-Runs used in this goal: 2 of 2 Claude, 1 of 2 Codex.
+Runs used in this goal: 2 of 2 Claude, 2 of 2 Codex.
 
 The Claude criterion is unstable. With the same script, one run had no placeholder in its reply and the next had one. The cause is not known. The reply text is not kept, by design. `reply_chars` now records the reply length, so a repeat can show whether the reply was empty.
 
@@ -187,7 +188,7 @@ Forgotten after the 14:55 UTC restart: the three synthetic values (length 40) fr
 
 ### Classification of the 138 masked items: blocked
 
-Status: the 138 masked items stay unclassified. They predate the origins change below, so their rule and location are not stored, and they cannot be classified from stored data. New items can be classified: both gateways were restarted at 14:55 UTC on the origins code (see below). No new item has been stored since, so no live origin row exists yet.
+Status: the 138 masked items stay unclassified. They predate the origins change below, so their rule and location are not stored, and they cannot be classified from stored data. New items can be classified: both gateways were restarted at 14:55 UTC on the origins code, and the Codex run at 14:58 UTC produced live origin rows (see Origins below).
 
 The 138 count is from `POST /responses 400 masked=138` at 13:17:26 UTC. That request used a rejected model. The log shows 35 new pending items in the 13:17:00–13:17:27 window: 15 `message text` and 20 `request metadata`. The other masked items were not logged as new. Grouping by source label alone (option a) was not chosen. See Decisions item 7.
 
@@ -206,7 +207,8 @@ Verification, 2026-11-03. The scratch scripts are not committed. They printed on
 - An end-to-end check: one masked request to a fresh gateway stored `github-pat` at `tool result from Bash, message 3`.
 - `check.py`: PASS.
 - Deployed on 2026-11-03. The user approved a restart. Restart alone would not load the change, because both units run from `t3-c0af0a97`, which was at `df05576`. So that worktree was moved, detached, to `f751ac6`, and both units were restarted at 14:55 UTC. Both processes run from `t3-c0af0a97`. Both listen on 8787 and 8788, and both review pages return 200. Both `answers.sqlite` files have the `origins` table, with no rows yet. The restart ended the gateway's open desktop notifications, and no gateway notification process remains. Their pending items remain on the review page.
-- Not verified: an origin row written by a running gateway. The next real masked item will show it.
+- Verified live, 14:58 UTC: the Codex test run (run 2) stored `github-pat` at `message text, item 7` and `in-process:entropy` at `message text, item 6`, both in the Codex store, both `pending`. The read-only query above returns these two rows.
+- Forgotten after run 2: the synthetic `github-pat` value (length 40). Its `values.sqlite` rows are gone. The `in-process:entropy` item from the same run (length 29) is not confirmed synthetic and stays pending.
 - Rollback: `git -C /home/tiago/.t3/worktrees/secret-gateway/t3-c0af0a97 checkout --detach df05576`, then `systemctl --user restart secret-gateway.service secret-gateway-codex.service`.
 
 Read-only query, once the gateways run this code. Run it on `~/.local/share/secret-gateway-codex/answers.sqlite` and `~/.local/share/secret-gateway/answers.sqlite`:
