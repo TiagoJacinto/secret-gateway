@@ -33,6 +33,8 @@ PLACEHOLDER = re.compile(r'⟦SECRET_[0-9a-f]{6,64}⟧')
 REVIEW_LINK = re.compile(r'\[⟦SECRET_[0-9a-f]{6,64}⟧\]\(http://127\.0\.0\.1:\d+/review/reveal/[0-9a-f]{64}\?token=[0-9a-f]{32}\)')
 PROVIDER_KEY = re.compile(r'^(npg_|cfut_|GOCSPX-|ya29\.|ghp_|github_pat_|sk-ant-|AKIA|sk_live_)')
 COMMAND = shlex.split(os.environ.get('GATEWAY_COMMAND', 'bun run start'))
+# A last user message that starts with this prefix is echoed back as the reply text, with no tool calls.
+VERBATIM = 'VERBATIM:'
 TEXT_WITHHELD_MARK = 'withheld by secret-gateway: the secret scanner was unavailable'
 WITHHELD_MARK = 'content withheld by secret-gateway'
 NOTE_PHRASES = {
@@ -98,12 +100,15 @@ def text_of(content):
     return '\n'.join(parts)
 
 
-def echo_placeholders(body):
-    text = ''
+def last_user_text(body):
     for message in reversed(body.get('messages') or []):
         if message.get('role') == 'user':
-            text = text_of(message.get('content'))
-            break
+            return text_of(message.get('content'))
+    return ''
+
+
+def echo_placeholders(body):
+    text = last_user_text(body)
     seen = []
     for placeholder in PLACEHOLDER.findall(text):
         if placeholder not in seen:
@@ -111,7 +116,16 @@ def echo_placeholders(body):
     return seen
 
 
-def build_stream(echo, size):
+def reply_parts(body):
+    """The fake upstream's reply: its text, and the placeholders it calls tools with."""
+    text = last_user_text(body)
+    if text.startswith(VERBATIM):
+        return text[len(VERBATIM):], []
+    echo = echo_placeholders(body)
+    return 'Text echo: ' + (echo[0] if echo else 'none'), echo
+
+
+def build_stream(text, tools, size):
     """The fake upstream's streamed reply. Fragments are split at `size` characters, so placeholders split."""
     events = []
 
@@ -121,12 +135,11 @@ def build_stream(echo, size):
     emit('message_start', {'type': 'message_start', 'message': {'id': 'msg_fake', 'type': 'message', 'role': 'assistant',
          'model': 'claude-haiku-5-5', 'content': [], 'stop_reason': None, 'stop_sequence': None,
          'usage': {'input_tokens': 1, 'output_tokens': 0}}})
-    text = 'Text echo: ' + (echo[0] if echo else 'none')
     emit('content_block_start', {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})
     for piece in [text[i:i + size] for i in range(0, len(text), size)]:
         emit('content_block_delta', {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': piece}})
     emit('content_block_stop', {'type': 'content_block_stop', 'index': 0})
-    for i, placeholder in enumerate(echo):
+    for i, placeholder in enumerate(tools):
         index = i + 1
         emit('content_block_start', {'type': 'content_block_start', 'index': index,
              'content_block': {'type': 'tool_use', 'id': f'toolu_{i}', 'name': 'use_credential', 'input': {}}})
@@ -167,9 +180,9 @@ class UpstreamHandler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._send(400, 'application/json', b'{"type": "error", "error": {"type": "invalid_request_error"}}')
             return
-        echo = echo_placeholders(body)
+        text, tools = reply_parts(body)
         if body.get('stream'):
-            payload = build_stream(echo, self.server.fragment)
+            payload = build_stream(text, tools, self.server.fragment)
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.end_headers()
@@ -177,9 +190,9 @@ class UpstreamHandler(BaseHTTPRequestHandler):
             return
         message = {
             'id': 'msg_fake', 'type': 'message', 'role': 'assistant', 'model': 'claude-haiku-5-5',
-            'content': [{'type': 'text', 'text': 'Text echo: ' + (echo[0] if echo else 'none')}]
+            'content': [{'type': 'text', 'text': text}]
             + [{'type': 'tool_use', 'id': f'toolu_{i}', 'name': 'use_credential', 'input': {'credential': p}}
-               for i, p in enumerate(echo)],
+               for i, p in enumerate(tools)],
             'stop_reason': 'tool_use', 'stop_sequence': None, 'usage': {'input_tokens': 1, 'output_tokens': 1},
         }
         self._send(200, 'application/json', json.dumps(message).encode())
@@ -369,8 +382,8 @@ def j_streaming(ctx):
         text = text_deltas_from_sse(events)
         checks.append(ensure(REVIEW_LINK.search(text) is not None and secret not in text,
                              'streamed text blocks link the placeholder to its review page (tool input gets the value)'))
-        echo = echo_placeholders(upstream.last()['body'])
-        expected = [name for name, _ in parse_sse(build_stream(echo, upstream.fragment))]
+        text, tools = reply_parts(upstream.last()['body'])
+        expected = [name for name, _ in parse_sse(build_stream(text, tools, upstream.fragment))]
         checks.append(ensure([name for name, _ in events] == expected,
                              'streamed event sequence is unchanged apart from the restored tool input and text links'))
     return checks
@@ -391,6 +404,46 @@ def j_non_streaming(ctx):
         texts = [b['text'] for b in reply['content'] if b['type'] == 'text']
         checks.append(ensure(len(texts) == 1 and REVIEW_LINK.search(texts[0]) is not None and secret not in texts[0],
                              'non-streaming text block links the placeholder to its review page'))
+    return checks
+
+
+def text_links_request(secret):
+    return (f'{VERBATIM}Link text: [token {secret}](https://example.com/docs)\n'
+            f'Bare URL: https://github.com/acme/repo?token={secret}\n'
+            f'Plain: {secret} done\n'
+            f'After link: [docs](https://example.com) then {secret}')
+
+
+def j_text_links(ctx):
+    """A placeholder inside a link or a URL stays plain, since a link cannot sit inside a link. Elsewhere it links."""
+    checks = []
+    upstream = ctx['upstream']
+    secret = ctx['github']
+    with gateway(upstream.url, env=ctx['env']) as gw:
+        identity = identity_of(gw.data_dir, secret)
+        placeholder = f'⟦SECRET_{identity[:6]}⟧'
+        link = f'[{placeholder}](http://127.0.0.1:{gw.port}/review/reveal/{identity}?token={gw.token()})'
+        expected = (f'Link text: [token {placeholder}](https://example.com/docs)\n'
+                    f'Bare URL: https://github.com/acme/repo?token={placeholder}\n'
+                    f'Plain: {link} done\n'
+                    f'After link: [docs](https://example.com) then {link}')
+        upstream.clear()
+        status, _, raw = messages_request(gw, [user(text_links_request(secret))])
+        ensure(status == 200, f'text-links request returned {status}')
+        ensure(secret not in forwarded_text(upstream), 'text-links request: upstream never receives the raw secret')
+        reply = json.loads(raw)
+        text = ''.join(block['text'] for block in reply['content'] if block['type'] == 'text')
+        checks.append(ensure(text == expected,
+                             'non-streaming: placeholders inside a link or URL stay plain, and elsewhere link to review'))
+        upstream.clear()
+        status, _, raw = messages_request(gw, [user(text_links_request(secret))], stream=True)
+        ensure(status == 200, f'streamed text-links request returned {status}')
+        checks.append(ensure(text_deltas_from_sse(parse_sse(raw)) == expected,
+                             'streaming: the same text when placeholders split across 5-character fragments'))
+        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        last_line = f'<td class="line">After link: [docs](https://example.com) then {placeholder}</td>'
+        checks.append(ensure(last_line.encode() in page and secret.encode() not in page,
+                             'review table: last line of the reply, shown with its placeholder and no review link'))
     return checks
 
 
@@ -603,6 +656,9 @@ def j_review(ctx):
         _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
         checks.append(ensure(b'Secret review' in page and not any(v.encode() in page for v in values.values()),
                              'review page renders and contains no values'))
+        last_line = f'<td class="line">a ⟦SECRET_{ids["github"][:6]}⟧</td>'
+        checks.append(ensure(last_line.encode() in page,
+                             'review table shows the last line that referenced each value, with its placeholder'))
 
         token = gw.token()
         status, _, _ = http('POST', f'{gw.url}/review/answer', body={'id': ids['github'], 'status': 'secret'},
@@ -706,6 +762,9 @@ def j_review(ctx):
         status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={gw.token()}', headers=gw.host())
         checks.append(ensure(status == 404 and b'not held in memory' in body and values['github'].encode() not in body,
                              'after a restart, reveal says the value is not held in memory, with no value'))
+        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        checks.append(ensure(b'<td class="line"><span>not in memory</span></td>' in page and values['github'].encode() not in page,
+                             'after a restart, the review table shows no last line, with no value'))
         upstream.clear()
         messages_request(gw, history + [{'role': 'assistant', 'content': 'ok'}, user(f'd {values["github"]}')])
         sent = forwarded_text(upstream)
@@ -871,6 +930,7 @@ def j_disk_non_disclosure(ctx):
 JOURNEYS = [
     ('streaming', j_streaming),
     ('non-streaming', j_non_streaming),
+    ('text-links', j_text_links),
     ('prompt-note', j_prompt_note),
     ('detection-fixtures', j_detection_fixtures),
     ('canonical-forms', j_canonical_forms),

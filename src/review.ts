@@ -1,5 +1,6 @@
 // Review surface on the gateway's own port: a local page and JSON endpoints.
-// Items show status, source, length and timestamps. Values are never stored on disk.
+// Items show status, source, length, the last line where the value was referenced, and timestamps.
+// Values are never stored on disk.
 // The reveal page shows a value only from the in-memory vault, and only with the review token.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { AnswerStore, Item } from './store.ts';
@@ -161,6 +162,7 @@ export class ReviewSurface {
     const rows = items
       .map((item) => {
         const short = item.id.slice(0, 12);
+        const line = this.#vault.lastLineOf(item.id);
         const reveal =
           this.#vault.valueOf(item.id) === undefined
             ? '<span>value not in memory</span>'
@@ -169,6 +171,7 @@ export class ReviewSurface {
   <td><code>${short}</code></td>
   <td>${item.status}</td>
   <td>${escapeHtml(item.source)}</td>
+  <td class="line">${line === undefined ? '<span>not in memory</span>' : escapeHtml(line)}</td>
   <td>${item.length}</td>
   <td>${escapeHtml(item.firstSeen)}</td>
   <td>
@@ -193,17 +196,18 @@ body { font-family: system-ui, sans-serif; color: var(--fg); background: var(--b
 table { border-collapse: collapse; width: 100%; }
 th, td { border-bottom: 1px solid var(--line); padding: 6px; text-align: left; font-size: 14px; }
 button { margin-right: 6px; }
-@media (max-width: 640px) { th:nth-child(5), td:nth-child(5) { display: none; } }
+td.line { overflow-wrap: anywhere; }
+@media (max-width: 640px) { th:nth-child(6), td:nth-child(6) { display: none; } }
 </style>
 </head>
 <body>
 <h1>Secret review</h1>
 <p>Pending and masked items stay masked. "Not a secret" shows the value from the next request onward. Earlier parts of each conversation keep their placeholders.
-"Show value" opens a new page with the value highlighted in the line it came from. Values are held in memory only and are lost when the gateway stops.</p>
+"Last line" is the last line that referenced the value, with the value shown as its placeholder. "Show value" opens a new page with the value highlighted in the line it came from. Values and lines are held in memory only and are lost when the gateway stops.</p>
 <table>
-<thead><tr><th>ID</th><th>Status</th><th>Source</th><th>Length</th><th>First seen</th><th>Answer</th></tr></thead>
+<thead><tr><th>ID</th><th>Status</th><th>Source</th><th>Last line</th><th>Length</th><th>First seen</th><th>Answer</th></tr></thead>
 <tbody>
-${rows || '<tr><td colspan="6">No detections yet.</td></tr>'}
+${rows || '<tr><td colspan="7">No detections yet.</td></tr>'}
 </tbody>
 </table>
 <script>

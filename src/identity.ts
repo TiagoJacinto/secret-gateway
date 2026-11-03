@@ -20,6 +20,9 @@ export function identityOf(key: Buffer, canonical: string): string {
 }
 
 // Six hex characters by default; longer only when two masked identities in one request collide.
+// Matches a placeholder in any text. Global, so use it with match, matchAll or replace.
+export const PLACEHOLDER = /⟦SECRET_[0-9a-f]{6,64}⟧/g;
+
 export function placeholderFor(identity: string, length = 6): string {
   return `⟦SECRET_${identity.slice(0, length)}⟧`;
 }

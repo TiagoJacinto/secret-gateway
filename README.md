@@ -19,7 +19,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 - Masks provider keys, `NAME=value` assignments for KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL and DATABASE_URL, URL passwords, UUIDs, JWTs, base64 blobs and random-looking tokens of 20 or more characters.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
-- Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again.
+- Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again. A placeholder inside link text, a link destination or a bare URL stays plain and gets no review link, because a link cannot sit inside a link.
 - Does not mask screenshots. Images pass through unchanged. See Limits.
 - Holds every new detection masked until you answer it on a local review page. Answers are remembered by identity.
 - Refuses a request rather than sending it raw when masking or the upstream fails.
@@ -65,7 +65,9 @@ Then start a session with `claude-masked`. The base URL sends requests to the ga
 
 ## Review detections
 
-Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`) and length. The page itself never shows a value.
+Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`), the last line, and length.
+
+- **Last line** is the last line where the gateway saw the value. The value appears as its placeholder, with no review link. For text the agent wrote, it is the last line of that response. For text sent to the model, it is the last line of the most recent request that held the value. A value that appears only in a tool call the agent made is recorded when the next request sends that call back. The line is held in memory only. Rows from before a restart show "not in memory". Masked values appear only as placeholders. Other text in the line is shown as sent or written, so a value you answered "Not a secret" can appear there in full.
 
 - **Show value** opens a new page that lists each appearance of the value in the session, labelled with its place (for example `user message text, message 3`). Each appearance shows its line with the value highlighted, the nearest non-empty line above and below it, and the empty lines between. Other masked values in those lines show as placeholders. The page needs the review token, which the review page includes, so only a page from this gateway can open it. The line and value are held in memory only. They are never written to disk, and a restart removes them. Rows from before a restart show "value not in memory".
 
@@ -91,4 +93,5 @@ These run the HTTP-boundary journeys and the scanner benchmark. The commands and
 - Scanner-alone recall is low for Cloudflare, Neon, Google and AWS formats. The name and entropy layers cover them in the full pipeline.
 - Thinking blocks are not changed. Tool definitions are not scanned. Document blocks and URL images are withheld, not scanned.
 - Not covered: other agents, hosted use, and multiple users. Codex has HTTP-boundary checks and a live reply probe; long-running Codex sessions and compaction have not been verified live.
+- Replies written before the link rule above keep any nested links they contain in Claude Code's transcript. The gateway does not rewrite them.
 - Claude Code's own transcripts keep real values, as they did before.
