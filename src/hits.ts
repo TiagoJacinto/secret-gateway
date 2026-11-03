@@ -1,6 +1,7 @@
 // Finds secret hits across a set of text segments. One scanner call covers every
 // segment and every decoded variant, so the external process starts once per request.
 import { canonicalOf, inProcessSpans, isExempt, type Span } from './detect.ts';
+import type { Exemptions } from './exemptions.ts';
 
 export type ScanFinding = { secret: string; line: number };
 export interface Scanner {
@@ -43,7 +44,7 @@ type Owner = {
   token?: Span;
 };
 
-export async function findHits(segments: Segment[], scanner: Scanner): Promise<Hit[][]> {
+export async function findHits(segments: Segment[], scanner: Scanner, exemptions: Exemptions): Promise<Hit[][]> {
   const owners: Owner[] = [];
   let offset = 0;
   segments.forEach((segment, index) => {
@@ -89,7 +90,7 @@ export async function findHits(segments: Segment[], scanner: Scanner): Promise<H
     const secret = canonicalOf(owner.text.slice(span.start, span.end));
     if (secret === '') continue;
     const segmentSpan = owner.token ?? span;
-    if (isExempt(segment.text, segmentSpan, segment.gitContext)) continue;
+    if (isExempt(segment.text, segmentSpan, segment.gitContext, exemptions)) continue;
     const bucket = owner.token ? variantHits : plainHits;
     bucket[owner.segment].push({ start: segmentSpan.start, end: segmentSpan.end, secret });
   }
