@@ -179,7 +179,7 @@ The Claude criterion is unstable. With the same script, one run had no placehold
 
 Values forgotten: one synthetic value (length 40) in each store, from the 13:20–13:22 UTC window. Still pending in that window and not confirmed synthetic: four Claude items (lengths 46, 29, 39, 117) and one Codex item (length 132).
 
-Still pending from the 14:36–14:37 runs: two Claude and one Codex synthetic value (length 40). Five other Claude items and twelve other Codex items come from the CLI's own context and are not confirmed synthetic. All of them are left pending.
+Forgotten after the 14:55 UTC restart: the three synthetic values (length 40) from the 14:36–14:37 runs, two Claude and one Codex, each confirmed by its window and length. The review API returned `deleted: true` for each, and `values.sqlite` holds no row for them. Their `items` rows stay `pending` with no value. Five other Claude items and twelve other Codex items come from the CLI's own context and are not confirmed synthetic. All of them are left pending.
 
 ### Codex echo finding
 
@@ -187,7 +187,7 @@ Still pending from the 14:36–14:37 runs: two Claude and one Codex synthetic va
 
 ### Classification of the 138 masked items: blocked
 
-Status: blocked. The 138 masked items predate the origins change below, so their rule and location are not stored. They cannot be classified from stored data. Classifying new items needs a gateway that runs the change, which needs a restart. The restart needs the user's approval.
+Status: the 138 masked items stay unclassified. They predate the origins change below, so their rule and location are not stored, and they cannot be classified from stored data. New items can be classified: both gateways were restarted at 14:55 UTC on the origins code (see below). No new item has been stored since, so no live origin row exists yet.
 
 The 138 count is from `POST /responses 400 masked=138` at 13:17:26 UTC. That request used a rejected model. The log shows 35 new pending items in the 13:17:00–13:17:27 window: 15 `message text` and 20 `request metadata`. The other masked items were not logged as new. Grouping by source label alone (option a) was not chosen. See Decisions item 7.
 
@@ -205,7 +205,9 @@ Verification, 2026-11-03. The scratch scripts are not committed. They printed on
 - A store check: a second write of the same item adds no row, and an item stored before the change gets no row.
 - An end-to-end check: one masked request to a fresh gateway stored `github-pat` at `tool result from Bash, message 3`.
 - `check.py`: PASS.
-- Not verified: the running services still run `df05576`. They write origins only after a restart, which is outside this goal.
+- Deployed on 2026-11-03. The user approved a restart. Restart alone would not load the change, because both units run from `t3-c0af0a97`, which was at `df05576`. So that worktree was moved, detached, to `f751ac6`, and both units were restarted at 14:55 UTC. Both processes run from `t3-c0af0a97`. Both listen on 8787 and 8788, and both review pages return 200. Both `answers.sqlite` files have the `origins` table, with no rows yet. The restart ended the gateway's open desktop notifications, and no gateway notification process remains. Their pending items remain on the review page.
+- Not verified: an origin row written by a running gateway. The next real masked item will show it.
+- Rollback: `git -C /home/tiago/.t3/worktrees/secret-gateway/t3-c0af0a97 checkout --detach df05576`, then `systemctl --user restart secret-gateway.service secret-gateway-codex.service`.
 
 Read-only query, once the gateways run this code. Run it on `~/.local/share/secret-gateway-codex/answers.sqlite` and `~/.local/share/secret-gateway/answers.sqlite`:
 
