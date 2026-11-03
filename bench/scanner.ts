@@ -2,9 +2,10 @@
 // per-request latency. Run from the repository root: bun run bench/scanner.ts
 // Scanner-alone recall is the decision metric. Pipeline recall (scanner plus in-process layers)
 // is reported alongside it. Latency is checked against 200 ms per request at p95.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { Exemptions } from '../src/exemptions.ts';
 import { findHits } from '../src/hits.ts';
 import { ExternalScanner, parseGitleaksJson, parseKingfisherJsonl } from '../src/scanner.ts';
 
@@ -12,6 +13,8 @@ type Case = { id: string; kind: 'positive' | 'negative'; family: string | null; 
 type Candidate = { name: string; argv: string[]; parse: (stdout: string) => { secret: string; line: number }[]; okExitCodes: number[] };
 
 const LATENCY_LIMIT_MS = 200;
+// No exemption lists: the benchmark measures the scanner and in-process layers, not a local exemptions.json.
+const NO_EXEMPTIONS: Exemptions = { patterns: [], keys: [] };
 const cases: Case[] = await Bun.file('.agents/verification/fixtures/scanner-cases.json').json();
 const candidates: Candidate[] = [
   { name: 'betterleaks 1.9.0 (all rules)', argv: ['.tools/bin/betterleaks', 'stdin', '-f', 'json', '-r', '-', '--no-banner', '--exit-code', '0'], parse: parseGitleaksJson, okExitCodes: [0] },
@@ -46,7 +49,7 @@ async function evaluate(candidate: Candidate) {
     const scannerSecrets = findings.map((finding) => finding.secret);
 
     started = performance.now();
-    const [hits] = await findHits([{ text: testCase.text, gitContext: testCase.gitContext ?? false }], scanner);
+    const [hits] = await findHits([{ text: testCase.text, gitContext: testCase.gitContext ?? false }], scanner, NO_EXEMPTIONS);
     pipelineMs.push(performance.now() - started);
     const pipelineSecrets = hits.map((hit) => hit.secret);
 
@@ -92,6 +95,11 @@ async function evaluate(candidate: Candidate) {
 
 const results = [];
 for (const candidate of candidates) {
+  // A scanner that is not installed is reported as skipped, so the others still run.
+  if (!existsSync(candidate.argv[0])) {
+    results.push({ scanner: candidate.name, skipped: `${candidate.argv[0]} not found` });
+    continue;
+  }
   try {
     results.push(await evaluate(candidate));
   } catch (error) {
