@@ -798,9 +798,13 @@ def j_review(ctx):
                              'another conversation sees "Not a secret" unmasked from its first message'))
 
         reveal = {name: f'/review/reveal/{ids[name]}?token={token}' for name in values}
-        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        _, _, page = http('GET', f'{gw.url}/review?status=all', headers=gw.host())
         checks.append(ensure(all(f'href="{link}"'.encode() in page for link in reveal.values()),
                              'review page links each held value to its reveal page'))
+        _, _, pending = http('GET', f'{gw.url}/review', headers=gw.host())
+        checks.append(ensure(f'href="{reveal["cloudflare"]}"'.encode() in pending
+                             and not any(f'href="{reveal[name]}"'.encode() in pending for name in ('github', 'anthropic')),
+                             'review opens on pending items only; answered items sit under their own filter'))
         status, headers, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
         checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
                              'reveal page with the token shows the value highlighted in its line'))
@@ -864,7 +868,7 @@ def j_review(ctx):
         status, _, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
         checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
                              'after a restart, reveal still shows the value highlighted in its line, from the value store'))
-        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        _, _, page = http('GET', f'{gw.url}/review?status=all', headers=gw.host())
         checks.append(ensure(f'<td class="line">a ⟦SECRET_{ids["github"][:6]}⟧</td>'.encode() in page
                              and values['github'].encode() not in page,
                              'after a restart, the review table still shows the last line, with no value'))
@@ -883,7 +887,7 @@ def j_review(ctx):
         status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={token}', headers=gw.host())
         checks.append(ensure(status == 404 and b'No value is stored' in body and values['github'].encode() not in body,
                              'after forget, reveal says no value is stored, with no value'))
-        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
+        _, _, page = http('GET', f'{gw.url}/review?status=all', headers=gw.host())
         checks.append(ensure(b'<span>value not stored</span>' in page and b'<td class="line"><span>not stored</span></td>' in page
                              and values['github'].encode() not in page,
                              'after forget, the review table shows no value and no last line'))

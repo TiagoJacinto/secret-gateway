@@ -7,6 +7,8 @@ import type { Context, SecretVault } from './vault.ts';
 
 const IDENTITY = /^[0-9a-f]{64}$/;
 const ANSWERS = new Set(['secret', 'not_secret']);
+const FILTERS = ['pending', 'secret', 'not_secret', 'all'];
+const PAGE_SIZE = 100;
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
@@ -91,7 +93,7 @@ export class ReviewSurface {
     if (!this.#hosts.has(request.headers.get('host') ?? '')) return new Response('forbidden host', { status: 403 });
 
     if (request.method === 'GET' && url.pathname === '/review') {
-      return new Response(this.#page(), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+      return new Response(this.#page(url), { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
     if (request.method === 'GET' && url.pathname === '/review/items') {
       return Response.json(this.#store.list().map(publicItem));
@@ -177,9 +179,33 @@ export class ReviewSurface {
     return given.length === expected.length && timingSafeEqual(given, expected);
   }
 
-  #page(): string {
-    const items = this.#store.list();
-    const rows = items
+  // One page of items for a status filter (pending by default), PAGE_SIZE rows per page.
+  #page(url: URL): string {
+    const requested = url.searchParams.get('status') ?? 'pending';
+    const filter = FILTERS.includes(requested) ? requested : 'pending';
+    const all = this.#store.list();
+    const counts: Record<string, number> = { all: all.length, pending: 0, secret: 0, not_secret: 0 };
+    for (const item of all) counts[item.status] += 1;
+    const matching = filter === 'all' ? all : all.filter((item) => item.status === filter);
+    const pages = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
+    const asked = Number.parseInt(url.searchParams.get('page') ?? '1', 10);
+    const page = Number.isFinite(asked) ? Math.min(Math.max(asked, 1), pages) : 1;
+    const start = (page - 1) * PAGE_SIZE;
+    const shown = matching.slice(start, start + PAGE_SIZE);
+    const link = (status: string, pageNumber: number) => `/review?status=${status}&page=${pageNumber}`;
+    const tabs = [
+      ['pending', 'Pending'],
+      ['secret', 'Secret'],
+      ['not_secret', 'Not a secret'],
+      ['all', 'All'],
+    ]
+      .map(([status, label]) => `<a href="${link(status, 1)}"${status === filter ? ' aria-current="page"' : ''}>${label} (${counts[status]})</a>`)
+      .join(' · ');
+    const range = matching.length === 0 ? 'No items.' : `Showing ${start + 1}-${start + shown.length} of ${matching.length}.`;
+    const pager = pages > 1
+      ? `<p>${page > 1 ? `<a href="${link(filter, page - 1)}">Previous</a> ` : ''}Page ${page} of ${pages}${page < pages ? ` <a href="${link(filter, page + 1)}">Next</a>` : ''}</p>`
+      : '';
+    const rows = shown
       .map((item) => {
         const short = item.id.slice(0, 12);
         const line = this.#vault.lastLineOf(item.id);
@@ -225,10 +251,13 @@ td.line { overflow-wrap: anywhere; }
 <h1>Secret review</h1>
 <p>Pending and masked items stay masked. "Not a secret" shows the value from the next request onward. Earlier parts of each conversation keep their placeholders.
 "Last line" is the last line that referenced the value, with the value shown as its placeholder. "Show value" opens a new page with the value highlighted in the line it came from. Values and lines are stored on this machine, in values.sqlite. "Forget value" deletes the stored value and its lines and keeps the status.</p>
+${tabs}
+<p>${range}</p>
+${pager}
 <table>
 <thead><tr><th>ID</th><th>Status</th><th>Source</th><th>Last line</th><th>Length</th><th>First seen</th><th>Answer</th></tr></thead>
 <tbody>
-${rows || '<tr><td colspan="7">No detections yet.</td></tr>'}
+${rows || '<tr><td colspan="7">Nothing to show.</td></tr>'}
 </tbody>
 </table>
 <script>
