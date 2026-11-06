@@ -670,6 +670,74 @@ def j_exemption_file(ctx):
     return checks
 
 
+def j_detection_file(ctx):
+    """Detection patterns live in detections.json and the `detect` CLI edits it. The running gateway applies edits without a restart."""
+    checks = []
+    upstream = ctx['upstream']
+    # Not detected by default: too short for the entropy rule and not a credential name.
+    value = 'FLG-QWERTY-4821'
+    encoded = base64.b64encode(value.encode()).decode()
+    text = f'ticket {value} opened'
+
+    def detect(gw, *args):
+        env = dict(os.environ, GATEWAY_DATA_DIR=str(gw.data_dir))
+        return subprocess.run(['bun', 'run', 'src/detect-cli.ts', *args], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    def sent(gw, message=text):
+        upstream.clear()
+        status, _, _ = messages_request(gw, [user(message)])
+        ensure(status == 200, f'detection request returned {status}')
+        return forwarded_text(upstream)
+
+    def masked(body, secret=value):
+        return secret not in body and '⟦SECRET_' in body
+
+    with gateway(upstream.url, env=ctx['env']) as gw:
+        checks.append(ensure(value in sent(gw), 'a value the scanner misses is forwarded before it is flagged'))
+        added = detect(gw, 'add', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}', '--case', 'sensitive', '--note', 'journey')
+        checks.append(ensure(added.returncode == 0, 'the CLI adds a detection pattern with a case rule'))
+        checks.append(ensure(masked(sent(gw)), 'an added pattern masks the next request without a restart'))
+        checks.append(ensure('flg-qwerty-4821' in sent(gw, 'ticket flg-qwerty-4821 opened'),
+                             'a sensitive pattern does not match another capitalization'))
+        checks.append(ensure(masked(sent(gw, f'copy {encoded} here'), encoded),
+                             'a base64 copy of a flagged value is masked too'))
+        listing = detect(gw, 'list').stdout
+        checks.append(ensure('pattern\tFLG-[A-Z]{6}-[0-9]{4}\tsensitive\tjourney' in listing,
+                             'the list shows the added pattern and its case rule'))
+        checks.append(ensure(oct((gw.data_dir / 'detections.json').stat().st_mode & 0o777) == '0o600',
+                             'the detections file has mode 0600'))
+        checks.append(ensure(detect(gw, 'add', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}', '--case', 'insensitive').returncode != 0,
+                             'the CLI refuses a present pattern with the other case rule'))
+        removed = detect(gw, 'remove', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}')
+        checks.append(ensure(removed.returncode == 0 and value in sent(gw),
+                             'a removed pattern stops masking without a restart'))
+        insensitive = detect(gw, 'add', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}', '--case', 'insensitive')
+        checks.append(ensure(insensitive.returncode == 0 and masked(sent(gw, 'ticket flg-qwerty-4821 opened'), 'flg-qwerty-4821'),
+                             'an insensitive pattern masks any capitalization'))
+        checks.append(ensure(detect(gw, 'remove', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}').returncode == 0,
+                             'the insensitive pattern is removed before the refusals'))
+        for args, label in ((('add', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}'), 'a pattern without a case rule'),
+                            (('add', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}', '--case', 'maybe'), 'a case rule other than sensitive or insensitive'),
+                            (('add', 'pattern', '.', '--case', 'sensitive'), 'a pattern that matches ordinary text'),
+                            (('add', 'pattern', 'a+', '--case', 'insensitive'), 'a pattern that matches a single letter'),
+                            (('add', 'pattern', 'x*', '--case', 'sensitive'), 'a pattern that matches the empty string'),
+                            (('add', 'pattern', '(a+)+b', '--case', 'sensitive'), 'a quantifier on a group'),
+                            (('add', 'pattern', '(?=x)FLG', '--case', 'sensitive'), 'a lookahead'),
+                            (('add', 'pattern', 'FLG-(', '--case', 'sensitive'), 'a regular expression that does not compile'),
+                            (('add', 'pattern', 'a*a*a*a*b', '--case', 'sensitive'), 'more than 3 quantifiers'),
+                            (('add', 'key', 'password', '--case', 'sensitive'), 'the exemption kind'),
+                            (('remove', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}'), 'removing an absent entry')):
+            checks.append(ensure(detect(gw, *args).returncode != 0, f'the CLI refuses {label}'))
+        detect(gw, 'add', 'pattern', 'FLG-[A-Z]{6}-[0-9]{4}', '--case', 'sensitive')
+        checks.append(ensure(masked(sent(gw)), 'the pattern masks again before the file is broken'))
+        (gw.data_dir / 'detections.json').write_text('{ not json')
+        checks.append(ensure(masked(sent(gw)), 'an invalid file keeps the previous list'))
+        log = gw.log_path.read_text()
+        checks.append(ensure('detections not loaded, keeping the previous list' in log and value not in log,
+                             'the log names the problem and holds no value'))
+    return checks
+
+
 def j_tool_references(ctx):
     upstream = ctx['upstream']
     name = 'mcp__computer-use-linux__list_windows'
@@ -1015,6 +1083,15 @@ def j_fail_closed(ctx):
         'GATEWAY_DATA_DIR': tempfile.mkdtemp(prefix='gateway-host-')})
     checks.append(ensure(refused.returncode != 0 and 'loopback' in refused.stdout + refused.stderr,
                          'a non-loopback HOST refuses to start'))
+    broken = Path(tempfile.mkdtemp(prefix='gateway-journey-')) / 'data'
+    REGISTRY['roots'].append(broken.parent)
+    broken.mkdir(mode=0o700)
+    (broken / 'detections.json').write_text('{"detections": [{"kind": "pattern", "value": "a+", "caseSensitive": true}]}')
+    stopped = subprocess.run(COMMAND, cwd=ROOT, capture_output=True, text=True, timeout=30, env={
+        **os.environ, 'PORT': str(free_port()), 'GATEWAY_DATA_DIR': str(broken)})
+    checks.append(ensure(stopped.returncode != 0 and 'refusing to start' in stopped.stdout + stopped.stderr
+                         and 'detections[0]' in stopped.stdout + stopped.stderr,
+                         'an invalid detections file refuses to start, so no pattern is silently dropped'))
     return checks
 
 
@@ -1077,6 +1154,7 @@ JOURNEYS = [
     ('canonical-forms', j_canonical_forms),
     ('exemptions-and-formats', j_exemptions_and_formats),
     ('exemption-file', j_exemption_file),
+    ('detection-file', j_detection_file),
     ('tool-references', j_tool_references),
     ('identity-restart', j_identity_restart),
     ('review', j_review),

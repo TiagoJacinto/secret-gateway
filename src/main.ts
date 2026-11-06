@@ -6,6 +6,7 @@ import { loadConfig } from './config.ts';
 import { loadIdentityKey, loadReviewToken } from './identity.ts';
 import { AnswerStore } from './store.ts';
 import { ExemptionFile, exemptionsPath } from './exemptions.ts';
+import { DetectionFile, detectionsPath } from './detections.ts';
 import { ExternalScanner, providerScanner } from './scanner.ts';
 import { Masker } from './masker.ts';
 import { ReviewSurface } from './review.ts';
@@ -42,6 +43,7 @@ const log = (line: string) => {
 
 const scanner = new ExternalScanner(providerScanner(config.scannerBinary));
 const exemptions = new ExemptionFile(exemptionsPath(config.dataDir), log);
+const detections = new DetectionFile(detectionsPath(config.dataDir), log);
 const vault = new SecretVault({ store: values, onError: (name) => log(`value store not written: ${name}`) });
 const review = new ReviewSurface({
   store,
@@ -66,6 +68,7 @@ const masker = new Masker({
   vault,
   scanner,
   exemptions: () => exemptions.current(),
+  detections: () => detections.current(),
   revealUrl: (identity) => review.revealUrl(identity),
   now,
   onPending: (item) => {
