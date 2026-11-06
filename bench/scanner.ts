@@ -49,7 +49,7 @@ async function evaluate(candidate: Candidate) {
     const scannerSecrets = findings.map((finding) => finding.secret);
 
     started = performance.now();
-    const [hits] = await findHits([{ text: testCase.text, gitContext: testCase.gitContext ?? false }], scanner, NO_EXEMPTIONS);
+    const [hits] = await findHits([{ text: testCase.text, gitContext: testCase.gitContext ?? false }], scanner, NO_EXEMPTIONS, []);
     pipelineMs.push(performance.now() - started);
     const pipelineSecrets = hits.map((hit) => hit.secret);
 

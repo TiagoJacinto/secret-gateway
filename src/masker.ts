@@ -17,6 +17,8 @@ export type Options = {
   scanner: Scanner;
   // Current exemption lists. Called once per request, so edits to the file apply without a restart.
   exemptions: () => Exemptions;
+  // Current detection patterns (see detections.ts). Called once per request, like exemptions.
+  detections: () => RegExp[];
   // Review page link for a masked identity. Responses link to it instead of showing the value.
   revealUrl: (identity: string) => string;
   now: () => string;
@@ -59,7 +61,7 @@ export class Masker {
   }
 
   async mask(body: Record<string, any>, conversation: Conversation): Promise<MaskedRequest> {
-    const { key, store, vault, scanner, exemptions, revealUrl, now, onPending, collectSlots } = this.#options;
+    const { key, store, vault, scanner, exemptions, detections, revealUrl, now, onPending, collectSlots } = this.#options;
     const textSlots = collectSlots(body);
     store.recordConversation(conversation.key, conversation.count);
     for (const slot of textSlots) {
@@ -88,6 +90,7 @@ export class Masker {
         textSlots.map((slot) => ({ text: slot.text, gitContext: slot.gitContext })),
         scanner,
         exemptions(),
+        detections(),
       );
     } catch {
       textHits = undefined;

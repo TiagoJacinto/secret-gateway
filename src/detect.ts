@@ -100,6 +100,17 @@ export function inProcessSpans(text: string): Span[] {
   return [...assignmentSpans(text), ...urlPasswordSpans(text), ...explicitSpans(text), ...entropySpans(text)];
 }
 
+// Detection patterns (see detections.ts): every match is a secret the user named, whatever its format.
+export function detectionSpans(text: string, patterns: RegExp[]): Span[] {
+  const spans: Span[] = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (match[0] !== '') spans.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+  return spans;
+}
+
 // Exemption lists (see exemptions.ts): a span inside an identifier that matches a listed pattern,
 // or the value of a listed key, is routing data and not a credential.
 function inExemptedContext(text: string, span: Span, exemptions: Exemptions): boolean {
