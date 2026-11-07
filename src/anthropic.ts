@@ -29,12 +29,16 @@ export function promptNote(dataDir: string): string {
     'Screenshots, including those attached to other tool results, are not masked. Prefer text sources, such as the accessibility tree,',
     'over screenshots, and take a screenshot only when no credential value is on screen.',
     'If you see a credential in plain text instead of a placeholder, the gateway missed it and the value has already reached the model provider.',
-    `First add a detection pattern, so that the next request masks it: ${detect} add pattern '<regex>' --case sensitive --note '<what it is>'.`,
+    'First note how to identify it: its prefix, its last 4 characters and where it appeared, such as acme_…d795 in the output of a command.',
+    'Once the value is masked you can no longer read it, and dashboards list credentials by these characters.',
+    `Then add a detection pattern, so that the next request masks it: ${detect} add pattern '<regex>' --case sensitive --note '<what it is>'.`,
     'Write the pattern for the credential\'s format, such as its prefix, alphabet and length, never the value itself.',
     'Use --case insensitive only when the format allows any capitalization.',
     'Then check that the value now appears as a placeholder.',
-    'Then tell the user where the credential is and that it reached the model provider, and recommend revoking it.',
-    'Do not delete, rotate or revoke a credential without the user\'s explicit approval. Report where it is instead.',
+    'Then tell the user where the credential is, that it reached the model provider, and the characters you noted.',
+    'You may revoke or rotate a credential you created in this conversation without asking. Match it by the characters you noted.',
+    'If something uses it, such as a CI secret, store a replacement there first, then revoke the old one.',
+    'Do not delete, rotate or revoke any other credential without the user\'s explicit approval. Recommend revoking it and report where it is instead.',
   ].join(' ');
 }
 

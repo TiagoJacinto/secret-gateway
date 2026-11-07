@@ -46,15 +46,19 @@ NOTE_PHRASES = {
     'verify after using a placeholder': 'check the result',
     'screenshots are not masked': 'are not masked. Prefer text sources, such as the accessibility tree,',
     'no screenshot while a credential is on screen': 'take a screenshot only when no credential value is on screen',
-    'no deletion or revocation without approval': 'Do not delete, rotate or revoke a credential without',
+    'no deletion or revocation of other credentials without approval': 'Do not delete, rotate or revoke any other credential without',
     'an unmasked credential reached the provider': 'If you see a credential in plain text instead of a placeholder',
-    'detection pattern before revocation': 'First add a detection pattern',
+    'identifying characters noted before masking': 'First note how to identify it: its prefix, its last 4 characters',
+    'detection pattern after noting them': 'Then add a detection pattern',
     'pattern for the format, never the value': 'never the value itself',
     'check the value is now masked': 'Then check that the value now appears as a placeholder',
-    'report exposure and recommend revoking': 'recommend revoking it',
+    'report exposure with the noted characters': 'that it reached the model provider, and the characters you noted',
+    'own credentials revoked without asking': 'You may revoke or rotate a credential you created in this conversation without asking',
+    'replacement stored before revoking': 'store a replacement there first, then revoke the old one',
+    'recommend revoking other credentials': 'Recommend revoking it',
 }
 # The detection command in the prompt note, up to the regex argument.
-NOTE_DETECT = re.compile(r"First add a detection pattern, so that the next request masks it: (.+?) add pattern '<regex>'")
+NOTE_DETECT = re.compile(r"Then add a detection pattern, so that the next request masks it: (.+?) add pattern '<regex>'")
 REGISTRY = {'roots': [], 'data_dirs': []}
 
 
@@ -484,6 +488,12 @@ def j_prompt_note(ctx):
         body = forwarded_text(upstream)
         checks.append(ensure(value not in body and '⟦SECRET_' in body,
                              "the note command edits this gateway's detections, so the next request masks the value"))
+        # The characters the note asks the agent to keep must stay readable after the pattern masks the value.
+        noted = 'noted NTE-…7310 and cfut_…d795 from the ticket output'
+        upstream.clear()
+        messages_request(gw, [user(noted)])
+        checks.append(ensure(noted in forwarded_text(upstream),
+                             'the noted prefix and last 4 characters stay unmasked after the pattern is added'))
         messages_request(gw, [user('hello again')])
         system_again = upstream.last()['body']['system']
         checks.append(ensure(any('Secret masking is active' in b.get('text', '') for b in system_again),
