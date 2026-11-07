@@ -1,6 +1,6 @@
 // Finds secret hits across a set of text segments. One scanner call covers every
 // segment and every decoded variant, so the external process starts once per request.
-import { canonicalOf, inProcessSpans, isExempt, type Span } from './detect.ts';
+import { canonicalOf, detectionSpans, inProcessSpans, isExempt, type Span } from './detect.ts';
 import type { Exemptions } from './exemptions.ts';
 
 export type ScanFinding = { secret: string; line: number; rule: string };
@@ -44,7 +44,12 @@ type Owner = {
   token?: Span;
 };
 
-export async function findHits(segments: Segment[], scanner: Scanner, exemptions: Exemptions): Promise<Hit[][]> {
+export async function findHits(
+  segments: Segment[],
+  scanner: Scanner,
+  exemptions: Exemptions,
+  detections: RegExp[],
+): Promise<Hit[][]> {
   const owners: Owner[] = [];
   let offset = 0;
   segments.forEach((segment, index) => {
@@ -79,6 +84,7 @@ export async function findHits(segments: Segment[], scanner: Scanner, exemptions
   }
   for (const owner of owners) {
     for (const span of inProcessSpans(owner.text)) found.push({ owner, span, rule: span.rule });
+    for (const span of detectionSpans(owner.text, detections)) found.push({ owner, span, rule: 'in-process:detection' });
   }
 
   // A decoded variant maps back to the encoded token that produced it, so the token is what gets masked.

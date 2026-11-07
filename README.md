@@ -82,6 +82,23 @@ bun run exempt remove pattern 'acme-ref:.*'
 
 Quote a pattern so the shell does not expand it. The command refuses an entry that could unmask credentials or slow every request: a pattern that matches a credential-shaped token (a hex digest, a UUID, a mixed-case token, a prefixed key, base64, a JWT) such as `.*` or `[0-9a-f-]{36}`; a quantifier on a group, a backreference, a lookaround or a named group; more than 3 quantifiers (`* + ? {n,m}`); a pattern over 128 characters or one that does not compile; and a key named like a credential (KEY, TOKEN, SECRET, PASSWORD, PASS, AUTH, CREDENTIAL, DATABASE_URL). Set `GATEWAY_DATA_DIR` to edit another data directory.
 
+## Detection patterns
+
+The inverse of exemptions. `detections.json` in the data directory lists secret formats that are always masked, wherever they appear, even when the scanner does not flag them. A match counts as a detected secret: it is masked, and the review page shows it like any other value.
+
+- A **pattern** is a JavaScript regular expression that matches the secret itself, such as `acme_[a-z0-9]{32}`. It matches anywhere in the text, including inside base64 copies. Each pattern states its case rule when it is added: `--case sensitive` matches only the capitalization the pattern spells out, and `--case insensitive` matches any capitalization. Adding a pattern always needs `--case`.
+- The gateway re-reads the file on the next request, so no restart is needed. If the file is invalid while the gateway runs, it keeps the previous list and logs the reason. If the file is invalid at startup, the gateway refuses to start, because running without its patterns would send the secrets they name unmasked.
+
+```sh
+bun run detect list
+bun run detect add pattern 'acme_[a-z0-9]{32}' --case sensitive --note "vendor API key"
+bun run detect remove pattern 'acme_[a-z0-9]{32}'
+```
+
+The command refuses a pattern that does not compile, a pattern that matches the empty string, a space, a single letter or `0` (it would mask ordinary text), and the same syntax the exemption list refuses: a quantifier on a group, a backreference, a lookaround, a named group, more than 3 quantifiers, or a pattern over 128 characters. Quote the pattern. A pattern cannot unmask anything, so the credential checks of the exemption list do not apply.
+
+A detection pattern does not remove a value the agent already saw. Delete or rotate that value.
+
 ## Review detections
 
 Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`), the last line, and length.

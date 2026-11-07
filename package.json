@@ -7,6 +7,7 @@
   "scripts": {
     "start": "bun run src/main.ts",
     "exempt": "bun run src/exempt.ts",
+    "detect": "bun run src/detect-cli.ts",
     "check:secrets": "gitleaks detect --redact --exit-code 1 --no-banner --log-opts=--all"
   }
 }

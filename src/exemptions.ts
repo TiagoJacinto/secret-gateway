@@ -75,7 +75,7 @@ export function check(entry: unknown): string | undefined {
 // Why a pattern is refused, or undefined when it is safe to run on every identifier. Backtracking cost is
 // bounded by syntax: no backreferences, lookarounds or named groups; quantifiers only on single characters
 // or classes, never on a group; at most MAX_QUANTIFIERS of them.
-function patternProblem(source: string): string | undefined {
+export function patternSyntaxProblem(source: string): string | undefined {
   if (source === '') return 'pattern must not be empty';
   if (source.length > MAX_PATTERN_LENGTH) return `pattern may have at most ${MAX_PATTERN_LENGTH} characters`;
   let quantifiers = 0;
@@ -123,6 +123,13 @@ function patternProblem(source: string): string | undefined {
     afterGroup = false;
     index++;
   }
+  return undefined;
+}
+
+// Exemption-specific check: the pattern must not match any credential-shaped canary.
+function patternProblem(source: string): string | undefined {
+  const syntax = patternSyntaxProblem(source);
+  if (syntax) return syntax;
   let regex: RegExp;
   try {
     regex = anchored(source);
