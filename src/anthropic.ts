@@ -2,22 +2,41 @@
 // Images pass through unchanged. The masking core only sees slots, so another provider's message
 // format needs only a new adapter.
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 
 export const WITHHELD_BLOCK = '[content withheld by secret-gateway: this block type cannot be scanned, so it was not sent]';
 
-export const PROMPT_NOTE = [
-  'Secret masking is active. Values that look like credentials appear as placeholders in the form ⟦SECRET_xxxxxx⟧.',
-  'A placeholder stands in for a real value. The gateway restores the real value in tool inputs when the tool runs.',
-  'Use each placeholder exactly as written in commands and tool arguments. Do not treat a placeholder as missing, broken or unknown,',
-  'and do not warn about it or ask the user to supply the value.',
-  'Masking covers all text you receive, including command output, files and accessibility trees, so reading a credential as text shows you only its placeholder.',
-  'Handle the credentials a task needs yourself. To move a value shown in a dashboard, read it from the accessibility tree',
-  'and pass its placeholder to a command that keeps it out of the output, such as printf \'%s\' ⟦SECRET_xxxxxx⟧ | gh secret set NAME.',
-  'After using a placeholder, check the result so that a wrong value fails loudly.',
-  'Screenshots, including those attached to other tool results, are not masked. Prefer text sources, such as the accessibility tree,',
-  'over screenshots, and take a screenshot only when no credential value is on screen.',
-  'Do not delete, rotate or revoke a credential without the user\'s explicit approval. Report where it is instead.',
-].join(' ');
+const DETECT_CLI = join(import.meta.dir, 'detect-cli.ts');
+
+// Single-quotes a path for a POSIX shell.
+function shellQuote(text: string): string {
+  return `'${text.replaceAll("'", `'\\''`)}'`;
+}
+
+// The note the gateway appends to every model request. It names the detection command for this gateway's
+// data directory, so an agent working in another directory edits the file this gateway reads.
+export function promptNote(dataDir: string): string {
+  const detect = `GATEWAY_DATA_DIR=${shellQuote(dataDir)} bun ${shellQuote(DETECT_CLI)}`;
+  return [
+    'Secret masking is active. Values that look like credentials appear as placeholders in the form ⟦SECRET_xxxxxx⟧.',
+    'A placeholder stands in for a real value. The gateway restores the real value in tool inputs when the tool runs.',
+    'Use each placeholder exactly as written in commands and tool arguments. Do not treat a placeholder as missing, broken or unknown,',
+    'and do not warn about it or ask the user to supply the value.',
+    'Masking covers all text you receive, including command output, files and accessibility trees, so reading a credential as text shows you only its placeholder.',
+    'Handle the credentials a task needs yourself. To move a value shown in a dashboard, read it from the accessibility tree',
+    'and pass its placeholder to a command that keeps it out of the output, such as printf \'%s\' ⟦SECRET_xxxxxx⟧ | gh secret set NAME.',
+    'After using a placeholder, check the result so that a wrong value fails loudly.',
+    'Screenshots, including those attached to other tool results, are not masked. Prefer text sources, such as the accessibility tree,',
+    'over screenshots, and take a screenshot only when no credential value is on screen.',
+    'If you see a credential in plain text instead of a placeholder, the gateway missed it and the value has already reached the model provider.',
+    `First add a detection pattern, so that the next request masks it: ${detect} add pattern '<regex>' --case sensitive --note '<what it is>'.`,
+    'Write the pattern for the credential\'s format, such as its prefix, alphabet and length, never the value itself.',
+    'Use --case insensitive only when the format allows any capitalization.',
+    'Then check that the value now appears as a placeholder.',
+    'Then tell the user where the credential is and that it reached the model provider, and recommend revoking it.',
+    'Do not delete, rotate or revoke a credential without the user\'s explicit approval. Report where it is instead.',
+  ].join(' ');
+}
 
 export type TextSlot = {
   kind: 'text';
@@ -144,12 +163,12 @@ export function conversationOf(headers: Headers, body: Block): { key: string; co
   return { key: `${headers.get('x-claude-code-session-id') ?? ''}:${system}`, count };
 }
 
-export function addPromptNote(body: Block): void {
+export function addPromptNote(body: Block, note: string): void {
   if (typeof body.system === 'string') {
-    body.system = [{ type: 'text', text: body.system }, { type: 'text', text: PROMPT_NOTE }];
+    body.system = [{ type: 'text', text: body.system }, { type: 'text', text: note }];
   } else if (Array.isArray(body.system)) {
-    body.system.push({ type: 'text', text: PROMPT_NOTE });
+    body.system.push({ type: 'text', text: note });
   } else {
-    body.system = [{ type: 'text', text: PROMPT_NOTE }];
+    body.system = [{ type: 'text', text: note }];
   }
 }

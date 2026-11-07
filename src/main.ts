@@ -12,6 +12,7 @@ import { Masker } from './masker.ts';
 import { ReviewSurface } from './review.ts';
 import { ManualClock, NotifySendNotifier, RecordingNotifier, ReviewNotifier, SystemClock } from './notify.ts';
 import { createHandler } from './gateway.ts';
+import { promptNote } from './anthropic.ts';
 import { LAST_LINE_FLUSH_MS, SecretVault } from './vault.ts';
 import { ValueStore } from './values.ts';
 
@@ -80,6 +81,7 @@ const handler = createHandler({
   review,
   upstreamBaseUrl: config.upstreamBaseUrl,
   responsesUpstreamBaseUrl: config.responsesUpstreamBaseUrl,
+  promptNote: promptNote(config.dataDir),
   log,
   testControl: config.testControl && clock instanceof ManualClock ? (ms) => clock.advance(ms) : undefined,
 });

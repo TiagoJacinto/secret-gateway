@@ -26,6 +26,8 @@ export type GatewayDeps = {
   review: ReviewSurface;
   upstreamBaseUrl: string;
   responsesUpstreamBaseUrl: string;
+  // Appended to every model request (see promptNote in anthropic.ts).
+  promptNote: string;
   log: (line: string) => void;
   testControl?: (ms: number) => void;
 };
@@ -90,7 +92,7 @@ async function proxy(request: Request, url: URL, deps: GatewayDeps, stats: Reque
         try {
           const conversation = responses ? responseConversation(request.headers, record) : conversationOf(request.headers, record);
           const masked = await deps.masker.mask(record, conversation, responses ? collectResponseSlots : collectSlots);
-          if (isMessages) (responses ? addResponseNote : addPromptNote)(masked.body);
+          if (isMessages) (responses ? addResponseNote : addPromptNote)(masked.body, deps.promptNote);
           body = JSON.stringify(masked.body);
           restore = masked.restore;
           responseStream = responses && record.stream === true;

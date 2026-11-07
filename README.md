@@ -99,6 +99,8 @@ The command refuses a pattern that does not compile, a pattern that matches the 
 
 A detection pattern does not remove a value the agent already saw. Delete or rotate that value.
 
+The prompt note tells the agent what to do when it sees a credential in plain text, which means the scanner missed it and the value has already reached the model provider. The agent first adds a pattern for the credential's format (never the value itself) with the `detect` command, so the next request masks the value, including in the conversation history. It then checks that the value shows as a placeholder, tells you where the credential is, and recommends revoking it. It does not revoke without your approval. The note gives the command as `GATEWAY_DATA_DIR='<data dir>' bun '<repository>/src/detect-cli.ts'`, so the agent can run it from any directory and it edits the file this gateway reads.
+
 ## Review detections
 
 Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`), the last line, and length.
