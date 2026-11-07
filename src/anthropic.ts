@@ -20,8 +20,10 @@ export function promptNote(dataDir: string): string {
   return [
     'Secret masking is active. Values that look like credentials appear as placeholders in the form ⟦SECRET_xxxxxx⟧.',
     'A placeholder stands in for a real value. The gateway restores the real value in tool inputs when the tool runs.',
-    'Use each placeholder exactly as written in commands and tool arguments. Do not treat a placeholder as missing, broken or unknown,',
-    'and do not warn about it or ask the user to supply the value.',
+    'Copy each placeholder exactly as written from text you received into commands and tool arguments.',
+    'Treat it as the real value: use it directly, and handle the task without asking the user for the value.',
+    'Give files, directories and other things you name plain names. A placeholder holds a value only when it appears in text you received,',
+    'so the gateway withholds a tool call that uses any other placeholder.',
     'Masking covers all text you receive, including command output, files and accessibility trees, so reading a credential as text shows you only its placeholder.',
     'Handle the credentials a task needs yourself. To move a value shown in a dashboard, read it from the accessibility tree',
     'and pass its placeholder to a command that keeps it out of the output, such as printf \'%s\' ⟦SECRET_xxxxxx⟧ | gh secret set NAME.',

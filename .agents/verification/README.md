@@ -64,9 +64,10 @@ Test-only settings, which the journeys use. Do not set them for real use:
 | Journey (`scripts/journeys.py`) | Checks |
 | --- | --- |
 | `streaming` | Raw secret absent upstream; tool input restored across 5-character fragments; streamed text blocks link each placeholder to its review page; event sequence unchanged apart from the restored tool input and text links |
+| `unknown-placeholders` | A placeholder the request did not mask reaches upstream unchanged; a tool call that uses one is withheld (renamed `secret_gateway_withheld`, reason names the placeholder, no raw value) non-streaming and across 5-character streamed fragments; in the same streamed reply, a call with a known placeholder still gets the real value; Claude Code's scratchpad path in the system prompt reaches upstream unmasked |
 | `non-streaming` | Tool input restored for the client; text block links the placeholder to its review page |
 | `text-links` | Placeholder inside link text, a link destination, or a bare URL stays plain; elsewhere it links to its review page; same exact text when placeholders split across 5-character fragments; review row shows the last line with the placeholder and no review link |
-| `prompt-note` | Original system prompt kept; note covers placeholder use, no "missing" warnings, masking of all text including accessibility trees, handling credentials through placeholders, verification, unmasked screenshots and text over screenshots, no screenshot while a credential is on screen, for a credential seen in plain text: note its prefix, last 4 characters and location first, then add a format pattern (never the value), check it is masked, and report exposure with the noted characters; a credential the agent created in the conversation may be revoked or rotated without asking, with a replacement stored first where it is used; no deletion or revocation of any other credential without approval; the note's detection command, run from another directory without gateway variables, edits this gateway's detections so the next request masks a matching value; the noted prefix and last 4 characters stay unmasked after the pattern is added; note added without a system prompt |
+| `prompt-note` | Original system prompt kept; note covers copying placeholders only from received text, using them as the real value without asking the user, plain names for things the agent names, withheld calls for other placeholders, masking of all text including accessibility trees, handling credentials through placeholders, verification, unmasked screenshots and text over screenshots, no screenshot while a credential is on screen, for a credential seen in plain text: note its prefix, last 4 characters and location first, then add a format pattern (never the value), check it is masked, and report exposure with the noted characters; a credential the agent created in the conversation may be revoked or rotated without asking, with a replacement stored first where it is used; no deletion or revocation of any other credential without approval; the note's detection command, run from another directory without gateway variables, edits this gateway's detections so the next request masks a matching value; the noted prefix and last 4 characters stay unmasked after the pattern is added; note added without a system prompt |
 | `detection-fixtures` | Every positive fixture (48) masked at the HTTP boundary; every negative (8) forwarded unchanged; git SHA exempt only in git output |
 | `canonical-forms` | Plain, quoted and padded, percent-encoded, and base64 copies share one placeholder |
 | `exemptions-and-formats` | UUID, JWT, base64 blob, and unknown random token masked; tool-use and tool-result history masked; gateway placeholders not re-masked; git SHA exempt; T3 thread, run, task and link identifiers exempt in tool results and tool inputs; a UUID under a non-T3 key and a token in a T3 link query stay masked |
@@ -240,8 +241,19 @@ Deployed on 2026-11-03 at 15:17 UTC. The user chose option 1 of the store plan: 
 
 Not verified: a live Claude or Codex session after the merge. Both live caps are used (2 of 2 each). The old Codex data directory `~/.local/share/secret-gateway-codex` is untouched and no longer read.
 
+## Results (2026-11-07)
+
+| Check | Result |
+| --- | --- |
+| `check.py` (smoke, 18 journeys including `unknown-placeholders`, Responses check) | PASS. Run with `GATEWAY_SCANNER_BINARY` set to the main checkout's Betterleaks, because `.tools/bin` is gitignored and absent in a new worktree. Without it, 14 journeys fail with masking-related reasons |
+| `unknown-placeholders` against the previous code | FAIL as expected: with the old `src/unmask.ts` the tool call is not withheld; with the old `src/exemptions.ts` the scratchpad path is masked |
+| `bun build src/main.ts` | Exit 0 |
+
+Cause (session of 2026-11-07, cairn-web goal): Claude Code's scratchpad path was masked as one placeholder, so the agent wrote 36 tool calls with placeholders it invented, and five files got placeholder names.
+
 ## Coverage gaps and limits
 
+- **Withheld calls are checked at the HTTP boundary only.** Claude Code's handling of a `secret_gateway_withheld` call (an unknown-tool error, and the API accepting that call in later history) is not verified live. Responses (Codex) tool calls with an unknown placeholder still run with its literal text.
 - **Screenshots are not masked (decision, 2026-10-30).** A secret visible in a screenshot reaches the provider. The image also stays in the conversation history. Expected from the Messages API, later requests resend it; this is not verified live.
 - No journey or `responses_check.py` case covers a placeholder inside a link or URL on the Responses path. The ad hoc check in the 2026-11-03 results covers it, and it is not repeatable from the suite.
 - Scanner-alone recall for Cloudflare, Neon, Google and AWS formats is low. Coverage for those comes from the name and entropy layers in the pipeline. The Google `ya29.` prefix is outside the token charset, so only its random tail is masked.

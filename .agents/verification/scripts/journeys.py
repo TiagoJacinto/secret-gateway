@@ -9,6 +9,7 @@ import base64
 import hashlib
 import hmac
 import json
+import uuid
 import os
 import random
 import re
@@ -39,8 +40,10 @@ VERBATIM = 'VERBATIM:'
 TEXT_WITHHELD_MARK = 'withheld by secret-gateway: the secret scanner was unavailable'
 WITHHELD_MARK = 'content withheld by secret-gateway'
 NOTE_PHRASES = {
-    'placeholders used as written': 'Use each placeholder exactly as written',
-    'placeholder is not missing or broken': 'Do not treat a placeholder as missing, broken or unknown',
+    'placeholders copied as written from received text': 'Copy each placeholder exactly as written from text you received',
+    'placeholder used as the real value, without asking the user': 'Treat it as the real value',
+    'plain names for things the agent names': 'Give files, directories and other things you name plain names',
+    'calls with other placeholders are withheld': 'the gateway withholds a tool call that uses any other placeholder',
     'text, including accessibility trees, is masked': 'including command output, files and accessibility trees',
     'agent handles credentials through placeholders': 'Handle the credentials a task needs yourself',
     'verify after using a placeholder': 'check the result',
@@ -416,6 +419,48 @@ def j_non_streaming(ctx):
         texts = [b['text'] for b in reply['content'] if b['type'] == 'text']
         checks.append(ensure(len(texts) == 1 and REVIEW_LINK.search(texts[0]) is not None and secret not in texts[0],
                              'non-streaming text block links the placeholder to its review page'))
+    return checks
+
+
+def j_unknown_placeholders(ctx):
+    """A placeholder the request did not mask has no value. A tool call that uses one is withheld, not run with its text."""
+    checks = []
+    upstream = ctx['upstream']
+    secret = ctx['github']
+    invented = '⟦SECRET_' + '0ae6e8' + '⟧'
+
+    def withheld(block, tool='use_credential'):
+        return (block.get('name') == 'secret_gateway_withheld' and block['input'].get('withheld_tool') == tool
+                and invented in block['input'].get('reason', '') and secret not in json.dumps(block['input']))
+
+    with gateway(upstream.url, env=ctx['env']) as gw:
+        upstream.clear()
+        status, _, raw = messages_request(gw, [user(f'write to {invented}.txt')])
+        ensure(status == 200, f'unknown-placeholder request returned {status}')
+        checks.append(ensure(invented in forwarded_text(upstream), 'an unknown placeholder reaches upstream unchanged'))
+        tools = [b for b in json.loads(raw)['content'] if b['type'] == 'tool_use']
+        checks.append(ensure(len(tools) == 1 and withheld(tools[0]),
+                             'non-streaming: a tool call with an unknown placeholder is withheld and names the placeholder'))
+
+        upstream.clear()
+        status, _, raw = messages_request(gw, [user(f'token {secret} then {invented}.txt')], stream=True)
+        ensure(status == 200, f'streamed mixed request returned {status}')
+        events = parse_sse(raw)
+        starts = [data['content_block'] for name, data in events
+                  if name == 'content_block_start' and data['content_block'].get('type') == 'tool_use']
+        inputs = tool_inputs_from_sse(events)
+        checks.append(ensure(len(starts) == 2 and starts[0]['name'] == 'use_credential' and inputs[0] == {'credential': secret},
+                             'streaming: the call with a known placeholder still runs with the real value'))
+        checks.append(ensure(starts[1]['name'] == 'secret_gateway_withheld'
+                             and withheld({'name': starts[1]['name'], 'input': inputs[1]}),
+                             'streaming: the call with an unknown placeholder is withheld, split across 5-character fragments'))
+        checks.append(ensure(secret not in text_deltas_from_sse(events), 'streaming: no raw value in the reply text'))
+
+        scratchpad = '/tmp/claude-1000/-home-user--project/' + str(uuid.UUID(int=7)) + '/scratchpad'
+        upstream.clear()
+        messages_request(gw, [user('hello')], system=f'Scratchpad directory: {scratchpad}')
+        checks.append(ensure(scratchpad in json.dumps(upstream.last()['body']['system'], ensure_ascii=False),
+                             "Claude Code's scratchpad path reaches upstream unmasked, so the agent can name its files"))
     return checks
 
 
@@ -1185,6 +1230,7 @@ def j_disk_non_disclosure(ctx):
 
 JOURNEYS = [
     ('streaming', j_streaming),
+    ('unknown-placeholders', j_unknown_placeholders),
     ('non-streaming', j_non_streaming),
     ('text-links', j_text_links),
     ('prompt-note', j_prompt_note),
