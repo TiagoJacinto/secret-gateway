@@ -10,7 +10,7 @@ The gateway is one process with one data directory. Requests under `/codex` use 
 
 The Responses adapter scans instructions, messages, tool results, tool arguments, tool descriptions, and metadata. It restores placeholders in function and custom tool calls, including streamed fragments. Protocol identifiers and encrypted reasoning/compaction remain opaque. Data-URL images pass through unmasked, as with Claude. Unsupported input items and compressed requests are refused. The launcher disables request compression and WebSockets so requests use the masking HTTP boundary. Responses and compaction POSTs are supported; other write routes are refused.
 
-This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service currently depends on this worktree remaining present.
+This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service runs from the main checkout, `~/Desktop/repos/secret-gateway`, set by `WorkingDirectory` in `~/.config/systemd/user/secret-gateway.service`. Changes take effect there only after they are merged to `main`, pulled into that checkout, and the service is restarted.
 
 Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
 
