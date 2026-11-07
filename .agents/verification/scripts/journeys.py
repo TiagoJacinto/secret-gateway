@@ -47,7 +47,14 @@ NOTE_PHRASES = {
     'screenshots are not masked': 'are not masked. Prefer text sources, such as the accessibility tree,',
     'no screenshot while a credential is on screen': 'take a screenshot only when no credential value is on screen',
     'no deletion or revocation without approval': 'Do not delete, rotate or revoke a credential without',
+    'an unmasked credential reached the provider': 'If you see a credential in plain text instead of a placeholder',
+    'detection pattern before revocation': 'First add a detection pattern',
+    'pattern for the format, never the value': 'never the value itself',
+    'check the value is now masked': 'Then check that the value now appears as a placeholder',
+    'report exposure and recommend revoking': 'recommend revoking it',
 }
+# The detection command in the prompt note, up to the regex argument.
+NOTE_DETECT = re.compile(r"First add a detection pattern, so that the next request masks it: (.+?) add pattern '<regex>'")
 REGISTRY = {'roots': [], 'data_dirs': []}
 
 
@@ -460,6 +467,23 @@ def j_prompt_note(ctx):
         note = ' '.join(block['text'] for block in system[1:])
         for label, phrase in NOTE_PHRASES.items():
             checks.append(ensure(phrase in note, f'prompt note covers: {label}'))
+        # Run the note's command as an agent would, from another directory, with no gateway variables set.
+        command = NOTE_DETECT.search(note)
+        ensure(command is not None, 'prompt note names the detection command')
+        value = 'NTE-ZXCVBN-7310'
+        upstream.clear()
+        messages_request(gw, [user(f'ticket {value} opened')])
+        checks.append(ensure(value in forwarded_text(upstream), 'a value the scanner misses is forwarded before the note command runs'))
+        env = {key: val for key, val in os.environ.items() if key != 'GATEWAY_DATA_DIR'}
+        with tempfile.TemporaryDirectory() as elsewhere:
+            added = subprocess.run(f"{command.group(1)} add pattern 'NTE-[A-Z]{{6}}-[0-9]{{4}}' --case sensitive --note 'journey'",
+                                   shell=True, cwd=elsewhere, env=env, capture_output=True, text=True)
+        checks.append(ensure(added.returncode == 0, 'the note command adds a pattern from another directory'))
+        upstream.clear()
+        messages_request(gw, [user(f'ticket {value} opened')])
+        body = forwarded_text(upstream)
+        checks.append(ensure(value not in body and '⟦SECRET_' in body,
+                             "the note command edits this gateway's detections, so the next request masks the value"))
         messages_request(gw, [user('hello again')])
         system_again = upstream.last()['body']['system']
         checks.append(ensure(any('Secret masking is active' in b.get('text', '') for b in system_again),

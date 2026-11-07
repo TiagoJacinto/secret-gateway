@@ -1,6 +1,6 @@
 // Responses request adapter. Protocol identifiers and encrypted reasoning remain opaque.
 import { createHash } from 'node:crypto';
-import { PROMPT_NOTE, WITHHELD_BLOCK, type TextSlot } from './anthropic.ts';
+import { WITHHELD_BLOCK, type TextSlot } from './anthropic.ts';
 
 export function collectResponseSlots(body: Record<string, any>): TextSlot[] {
   const slots: TextSlot[] = [];
@@ -55,6 +55,6 @@ export function responseConversation(headers: Headers, body: Record<string, any>
     count: Array.isArray(body.input) ? body.input.length : 1 };
 }
 
-export function addResponseNote(body: Record<string, any>): void {
-  body.instructions = `${body.instructions ?? ''}\n${PROMPT_NOTE}`;
+export function addResponseNote(body: Record<string, any>, note: string): void {
+  body.instructions = `${body.instructions ?? ''}\n${note}`;
 }

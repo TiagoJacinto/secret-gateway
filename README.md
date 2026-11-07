@@ -10,7 +10,7 @@ The gateway is one process with one data directory. Requests under `/codex` use 
 
 The Responses adapter scans instructions, messages, tool results, tool arguments, tool descriptions, and metadata. It restores placeholders in function and custom tool calls, including streamed fragments. Protocol identifiers and encrypted reasoning/compaction remain opaque. Data-URL images pass through unmasked, as with Claude. Unsupported input items and compressed requests are refused. The launcher disables request compression and WebSockets so requests use the masking HTTP boundary. Responses and compaction POSTs are supported; other write routes are refused.
 
-This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service currently depends on this worktree remaining present.
+This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service runs from the main checkout, `~/Desktop/repos/secret-gateway`, set by `WorkingDirectory` in `~/.config/systemd/user/secret-gateway.service`. Changes take effect there only after they are merged to `main`, pulled into that checkout, and the service is restarted.
 
 Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
 
@@ -98,6 +98,8 @@ bun run detect remove pattern 'acme_[a-z0-9]{32}'
 The command refuses a pattern that does not compile, a pattern that matches the empty string, a space, a single letter or `0` (it would mask ordinary text), and the same syntax the exemption list refuses: a quantifier on a group, a backreference, a lookaround, a named group, more than 3 quantifiers, or a pattern over 128 characters. Quote the pattern. A pattern cannot unmask anything, so the credential checks of the exemption list do not apply.
 
 A detection pattern does not remove a value the agent already saw. Delete or rotate that value.
+
+The prompt note tells the agent what to do when it sees a credential in plain text, which means the scanner missed it and the value has already reached the model provider. The agent first adds a pattern for the credential's format (never the value itself) with the `detect` command, so the next request masks the value, including in the conversation history. It then checks that the value shows as a placeholder, tells you where the credential is, and recommends revoking it. It does not revoke without your approval. The note gives the command as `GATEWAY_DATA_DIR='<data dir>' bun '<repository>/src/detect-cli.ts'`, so the agent can run it from any directory and it edits the file this gateway reads.
 
 ## Review detections
 
