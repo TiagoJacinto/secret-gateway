@@ -20,6 +20,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 - Leaves identifiers and keys on the exemption lists unmasked. See Exemptions.
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
+- Withholds a Claude Code tool call that uses a placeholder the request did not mask, such as one the model invented. That placeholder has no value, so the call would run with its literal text, for example as a file name. The gateway renames the call to `secret_gateway_withheld` and puts the reason in its input. Claude Code reports the unknown tool to the model, which reads the reason. Codex (Responses) calls are not checked this way yet.
 - Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again. A placeholder inside link text, a link destination or a bare URL stays plain and gets no review link, because a link cannot sit inside a link.
 - Does not mask screenshots. Images pass through unchanged. See Limits.
 - Holds every new detection masked until you answer it on a local review page. Answers are remembered by identity.
@@ -71,7 +72,7 @@ Some values match the masking rules but are routing data, such as the T3 Code th
 - A **pattern** is a case-insensitive JavaScript regular expression that must match a whole identifier, so `mcp:launch:.*` exempts `mcp:launch:` followed by anything, `.*-ticket-[0-9]+` exempts an identifier of that shape, and `ref-[0-9a-f]{8}` does not exempt `ref-` followed by 40 hex digits. An identifier is a run of letters, digits and `: % / . _ ~ -`, so a link's query text after `?` stays scanned, and an identifier over 256 characters is never exempt.
 - A **key** exempts the value after that name, such as `"threadId":`.
 
-The gateway creates the file on first start with the T3 Code entries, then the file is the source of truth. The gateway re-reads it on the next request after it changes, so no restart is needed. If the file is invalid, the gateway keeps the previous lists (none at startup) and logs the reason. The file holds no secret values. For one value, use **Not a secret** on the review page.
+The gateway creates the file on first start with the T3 Code entries and two Claude Code path patterns (`/tmp/claude-<uid>/…` and `~/.claude/projects/…`), then the file is the source of truth. These paths hold a session UUID; masked, they hide the agent's scratchpad. A data directory created before these patterns needs them added with `bun run exempt add pattern`. The gateway re-reads it on the next request after it changes, so no restart is needed. If the file is invalid, the gateway keeps the previous lists (none at startup) and logs the reason. The file holds no secret values. For one value, use **Not a secret** on the review page.
 
 ```sh
 bun run exempt list

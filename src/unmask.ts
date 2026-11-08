@@ -3,8 +3,38 @@ import { PLACEHOLDER } from './identity.ts';
 // Restores placeholders in responses, for plain JSON and for streamed events. Tool-use inputs get the
 // real value, so the tool can run. Text blocks get a link to the review page, so the user can check
 // the value, except where the placeholder already sits in a link or a URL: a link inside a link is not
-// valid markdown, so that placeholder stays plain text. A placeholder the request did not mask is left unchanged.
+// valid markdown, so that placeholder stays plain text. A placeholder the request did not mask is left unchanged
+// in text. In a tool input it has no value, so the gateway withholds the whole call (see withheldInput).
 const MAX_HELD = 80;
+
+// The tool name a withheld call gets. No client has a tool by this name, so the client refuses to run it
+// and reports an error to the model, which then reads the reason in its own call.
+export const WITHHELD_TOOL = 'secret_gateway_withheld';
+
+function collectPlaceholders(value: unknown, found: Set<string>): void {
+  if (typeof value === 'string') for (const match of value.matchAll(PLACEHOLDER)) found.add(match[0]);
+  else if (Array.isArray(value)) for (const item of value) collectPlaceholders(item, found);
+  else if (value && typeof value === 'object') for (const item of Object.values(value)) collectPlaceholders(item, found);
+}
+
+// Placeholders in a tool input that this request did not mask. Such a placeholder was not copied from the
+// conversation, so running the call would pass its literal text, for example as a file name.
+async function unknownPlaceholders(input: unknown, lookup: Lookup): Promise<string[]> {
+  const found = new Set<string>();
+  collectPlaceholders(input, found);
+  const unknown: string[] = [];
+  for (const placeholder of found) if (await lookup(placeholder) === undefined) unknown.push(placeholder);
+  return unknown;
+}
+
+function withheldInput(tool: unknown, unknown: string[]): Record<string, string> {
+  return {
+    withheld_tool: String(tool),
+    reason: `The secret gateway withheld this call because it used ${unknown.join(', ')}, which no text in this conversation holds, `
+      + 'so it has no value. Copy a placeholder only from text you received, and give files, directories and other things you name '
+      + 'plain names. Then make the call again.',
+  };
+}
 
 export type Lookup = (placeholder: string) => Promise<string | undefined>;
 // seen receives each text block as the model wrote it, before any link is added, so the gateway can record
@@ -134,7 +164,15 @@ export async function restoreJson(text: string, restore: Restore): Promise<strin
     return value;
   };
   for (const block of message.content ?? []) {
-    if (block?.type === 'tool_use') block.input = await walk(block.input);
+    if (block?.type === 'tool_use') {
+      const unknown = await unknownPlaceholders(block.input, restore.lookup);
+      if (unknown.length > 0) {
+        block.input = withheldInput(block.name, unknown);
+        block.name = WITHHELD_TOOL;
+      } else {
+        block.input = await walk(block.input);
+      }
+    }
     if (block?.type === 'text' && typeof block.text === 'string') {
       restore.seen(block.text);
       block.text = await replaceAll(block.text, restore.link, reviewLink, new LinkState());
@@ -211,11 +249,46 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const reader = upstream.getReader();
-      const tools = new Map<number, PlaceholderStream>();
+      // Each tool block is held until it ends, because a placeholder with no value withholds the whole call,
+      // including the tool name in its first event.
+      const tools = new Map<number, HeldTool>();
       const texts = new Map<number, PlaceholderStream>();
       // Text of each block as the model wrote it, before links are added. Recorded when the block ends.
       const rawTexts = new Map<number, string>();
       const emit = (event: string) => controller.enqueue(encoder.encode(`${event}\n\n`));
+      const delta = (index: number, partial: string) => `event: content_block_delta\ndata: ${JSON.stringify({
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: partial },
+      })}`;
+
+      // Emits a held tool block: restored as it arrived, or as a withheld call when it uses an unknown placeholder.
+      const release = async (index: number, held: HeldTool) => {
+        tools.delete(index);
+        const json = held.deltas.map((event) => event.parsed.delta.partial_json ?? '').join('');
+        let input: unknown = json;
+        try {
+          input = JSON.parse(json);
+        } catch {
+          // Incomplete JSON: check its text.
+        }
+        const unknown = await unknownPlaceholders(input, restore.lookup);
+        if (unknown.length > 0) {
+          const block = held.start.parsed.content_block;
+          held.start.parsed.content_block = { ...block, name: WITHHELD_TOOL, input: {} };
+          emit(eventWith(held.start.others, held.start.parsed));
+          emit(delta(index, JSON.stringify(withheldInput(block.name, unknown))));
+          return;
+        }
+        emit(held.start.event);
+        const stream = new PlaceholderStream(restore.lookup, jsonValue);
+        for (const event of held.deltas) {
+          event.parsed.delta.partial_json = await stream.push(event.parsed.delta.partial_json ?? '');
+          emit(eventWith(event.others, event.parsed));
+        }
+        const rest = await stream.flush();
+        if (rest !== '') emit(delta(index, rest));
+      };
 
       const handle = async (event: string) => {
         const lines = event.split('\n');
@@ -224,15 +297,15 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
         if (!parsed) return emit(event);
         const index = parsed.index;
         const others = lines.filter((line) => !line.startsWith('data:'));
-        const withData = (payload: unknown) => [...others, `data: ${JSON.stringify(payload)}`].join('\n');
+        const withData = (payload: unknown) => eventWith(others, payload);
 
         if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'tool_use') {
-          tools.set(index, new PlaceholderStream(restore.lookup, jsonValue));
-          return emit(event);
+          tools.set(index, { start: { event, others, parsed }, deltas: [] });
+          return;
         }
         if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'input_json_delta' && tools.has(index)) {
-          parsed.delta.partial_json = await tools.get(index)!.push(parsed.delta.partial_json ?? '');
-          return emit(withData(parsed));
+          tools.get(index)!.deltas.push({ others, parsed });
+          return;
         }
         if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta' && typeof parsed.delta.text === 'string') {
           rawTexts.set(index, (rawTexts.get(index) ?? '') + parsed.delta.text);
@@ -241,17 +314,7 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
           return emit(withData(parsed));
         }
         if (parsed.type === 'content_block_stop') {
-          if (tools.has(index)) {
-            const rest = await tools.get(index)!.flush();
-            tools.delete(index);
-            if (rest !== '') {
-              emit(`event: content_block_delta\ndata: ${JSON.stringify({
-                type: 'content_block_delta',
-                index,
-                delta: { type: 'input_json_delta', partial_json: rest },
-              })}`);
-            }
-          }
+          if (tools.has(index)) await release(index, tools.get(index)!);
           if (rawTexts.has(index)) {
             restore.seen(rawTexts.get(index)!);
             rawTexts.delete(index);
@@ -295,11 +358,20 @@ export function restoreSse(upstream: ReadableStream<Uint8Array>, restore: Restor
           buffer = await decodeEvents(buffer + decoder.decode(value, { stream: true }), false);
         }
         await decodeEvents(buffer + decoder.decode(), true);
+        // A stream that ended inside a tool block: release what arrived.
+        for (const [index, held] of [...tools]) await release(index, held);
       } finally {
         controller.close();
       }
     },
   });
+}
+
+type HeldEvent = { others: string[]; parsed: any };
+type HeldTool = { start: HeldEvent & { event: string }; deltas: HeldEvent[] };
+
+function eventWith(others: string[], payload: unknown): string {
+  return [...others, `data: ${JSON.stringify(payload)}`].join('\n');
 }
 
 function parseData(line: string): any | undefined {

@@ -43,8 +43,12 @@ const CANARIES: Record<string, string> = {
   'a path-like value': `v2/${draw(ALNUM, 32, 8)}/${draw(LOWER, 32, 9)}`,
 };
 
-// T3 Code routing data: the IDs and links agents pass back to T3 tools.
+// T3 Code routing data: the IDs and links agents pass back to T3 tools. Claude Code's own paths, which hold a
+// session UUID: masking them hides the scratchpad from the agent, which then invents names for its files.
+const HARNESS_PATHS: Exemption[] = ['/tmp/claude-[0-9]+/.*', '(?:~|/home/[^/]+)/\\.claude/projects/.*']
+  .map((value): Exemption => ({ kind: 'pattern', value, note: 'Claude Code path' }));
 export const SEED: Exemption[] = [
+  ...HARNESS_PATHS,
   ...['mcp(?::|%3A)launch(?::|%3A).*', 'scheduled-task:.*', 'run:thread:.*', 'message:(?:mcp|provider):.*', 'turn-item:.*',
     '(?:thread:delegated-task|delegated-task):.*', 't3-(?:thread|citation)://.*']
     .map((value): Exemption => ({ kind: 'pattern', value, note: 'T3 Code identifier' })),
