@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs';
 import type { Exemptions } from './exemptions.ts';
 
 // In-process detection layers: name-based assignments, URL passwords, explicit formats,
@@ -85,12 +86,29 @@ function explicitSpans(text: string): RuledSpan[] {
   return spans;
 }
 
-// Entropy rule: random-looking tokens of 20 or more characters.
+// Word check: the letter runs of a token (split at digits, separators and case changes) are all dictionary
+// words, so the token reads as ordinary text, such as `configuration_manager_v2` or `PostgresqlDatabase1`.
+// Single letters are ignored; any run of 2+ letters must be a word.
+// The system dictionary when present, else the bundled list. Both are reduced to lowercase words of 3+ letters.
+const SYSTEM_WORDS = '/usr/share/dict/words';
+const BUNDLED_WORDS = new URL('./words.txt', import.meta.url);
+const WORDS = new Set(
+  (existsSync(SYSTEM_WORDS) ? readFileSync(SYSTEM_WORDS, 'utf8') : readFileSync(BUNDLED_WORDS, 'utf8'))
+    .split('\n')
+    .map((word) => word.trim().toLowerCase())
+    .filter((word) => /^[a-z]{3,}$/.test(word)),
+);
+function isWordLike(token: string): boolean {
+  const runs = (token.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[A-Za-z]/g) ?? []).filter((run) => run.length > 1);
+  return runs.length > 0 && runs.every((run) => WORDS.has(run.toLowerCase()));
+}
+
+// Entropy rule: random-looking tokens of 20 or more characters that do not read as ordinary words.
 function entropySpans(text: string): RuledSpan[] {
   const spans: RuledSpan[] = [];
   for (const match of text.matchAll(TOKEN)) {
     const token = match[0];
-    const randomLooking = /[A-Za-z]/.test(token) && /[0-9]/.test(token) && entropy(token) >= ENTROPY_FLOOR;
+    const randomLooking = /[A-Za-z]/.test(token) && /[0-9]/.test(token) && entropy(token) >= ENTROPY_FLOOR && !isWordLike(token);
     if (randomLooking || PADDED_BASE64.test(token)) {
       spans.push({ start: match.index, end: match.index + token.length, rule: 'in-process:entropy' });
     }
