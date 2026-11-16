@@ -1,55 +1,31 @@
-// Review surface on the gateway's own port: a local page and JSON endpoints.
+// Review surface on the gateway's own port: the React page (built by Vite into web/dist) and JSON endpoints.
 // Items show status, source, length, the last line where the value was referenced, and timestamps.
-// The reveal page shows a value from the value store, and only with the review token.
+// The reveal endpoint returns a value from the value store, and only with the review token.
 import { timingSafeEqual } from 'node:crypto';
+import { join } from 'node:path';
 import type { AnswerStore, Item } from './store.ts';
-import type { Context, SecretVault } from './vault.ts';
+import type { SecretVault } from './vault.ts';
 
 const IDENTITY = /^[0-9a-f]{64}$/;
+const ASSET = /^[A-Za-z0-9._-]+$/;
 const ANSWERS = new Set(['secret', 'not_secret']);
 const FILTERS = ['pending', 'secret', 'not_secret', 'all'];
 const PAGE_SIZE = 100;
+const DIST = join(import.meta.dir, '..', 'web', 'dist');
+const SENSITIVE_HEADERS = {
+  'cache-control': 'no-store',
+  'referrer-policy': 'no-referrer',
+};
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
-}
-
-// Each appearance: where it sits in the session, then its lines with the value highlighted.
-function revealBody(contexts: Context[]): string {
-  const appearances = contexts.map((context) => {
-    const line = `${escapeHtml(context.before)}<mark>${escapeHtml(context.value)}</mark>${escapeHtml(context.after)}`;
-    const above = context.above.map(escapeHtml);
-    const below = context.below.map(escapeHtml);
-    return `<p>${escapeHtml(context.location)}</p>\n<pre>${[...above, line, ...below].join('\n')}</pre>`;
-  });
-  return `<p>Stored on this machine. Close this page when you are done.</p>
-<h2>Where it appears</h2>
-${appearances.join('\n') || '<p>No line was recorded for this value.</p>'}`;
-}
-
-function revealPage(body: string): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Secret value</title>
-<style>
-:root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fff; --line: #d0d0d5; --mark: #ffe066; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fg: #f2f2f4; --bg: #161618; --line: #3a3a40; --mark: #7a6a1e; } }
-:root[data-theme="dark"] { --fg: #f2f2f4; --bg: #161618; --line: #3a3a40; --mark: #7a6a1e; }
-body { font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 16px; }
-pre { border: 1px solid var(--line); padding: 12px; white-space: pre-wrap; word-break: break-all; }
-mark { background: var(--mark); color: var(--fg); padding: 0 2px; }
-</style>
-</head>
-<body>
-<h1>Secret value</h1>
-${body}
-<p><a href="/review">Back to review</a></p>
-</body>
-</html>`;
-}
+export type ReviewRow = {
+  id: string;
+  status: Item['status'];
+  source: string;
+  length: number;
+  firstSeen: string;
+  lastLine: string | null;
+  stored: boolean;
+};
 
 export class ReviewSurface {
   readonly #store: AnswerStore;
@@ -93,10 +69,17 @@ export class ReviewSurface {
     if (!this.#hosts.has(request.headers.get('host') ?? '')) return new Response('forbidden host', { status: 403 });
 
     if (request.method === 'GET' && url.pathname === '/review') {
-      return new Response(this.#page(url), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+      return this.#shell();
+    }
+    const asset = url.pathname.match(/^\/review\/assets\/([^/]+)$/);
+    if (request.method === 'GET' && asset && ASSET.test(asset[1])) {
+      return this.#asset(asset[1]);
     }
     if (request.method === 'GET' && url.pathname === '/review/items') {
       return Response.json(this.#store.list().map(publicItem));
+    }
+    if (request.method === 'GET' && url.pathname === '/review/page') {
+      return Response.json(this.#page(url));
     }
     if (request.method === 'POST' && url.pathname === '/review/answer') {
       return this.#answer(request);
@@ -106,7 +89,11 @@ export class ReviewSurface {
     }
     const reveal = url.pathname.match(/^\/review\/reveal\/([^/]+)$/);
     if (request.method === 'GET' && reveal) {
-      return this.#reveal(url, reveal[1]);
+      return this.#revealPage(url, reveal[1]);
+    }
+    const values = url.pathname.match(/^\/review\/values\/([^/]+)$/);
+    if (request.method === 'GET' && values) {
+      return this.#values(request, values[1]);
     }
     return new Response('not found', { status: 404 });
   }
@@ -116,6 +103,20 @@ export class ReviewSurface {
     const updated = this.#store.answer(id, status, this.#now());
     if (updated) this.#onAnswer(id, status);
     return updated;
+  }
+
+  // The built React page. The review token goes into a meta tag, which the page reads for its POST and reveal requests.
+  async #shell(): Promise<Response> {
+    const file = Bun.file(join(DIST, 'index.html'));
+    if (!(await file.exists())) return new Response('review page not built; run bun run build:web', { status: 503 });
+    const html = (await file.text()).replace('</head>', `<meta name="review-token" content="${this.#token}">\n</head>`);
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', ...SENSITIVE_HEADERS } });
+  }
+
+  async #asset(name: string): Promise<Response> {
+    const file = Bun.file(join(DIST, 'assets', name));
+    if (!(await file.exists())) return new Response('not found', { status: 404 });
+    return new Response(file);
   }
 
   // Checks the origin, token and JSON body that every POST endpoint needs. Returns the body or the refusal.
@@ -157,20 +158,21 @@ export class ReviewSurface {
     return Response.json({ deleted: this.#vault.forget(body.id) });
   }
 
-  #reveal(url: URL, id: string): Response {
+  // The reveal page is served only with the token in the URL. Its data comes from #values, which needs the token header.
+  async #revealPage(url: URL, id: string): Promise<Response> {
     if (!this.#tokenMatches(url.searchParams.get('token'))) return new Response('invalid review token', { status: 403 });
     if (!IDENTITY.test(id)) return new Response('invalid id', { status: 400 });
-    const headers = {
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer',
-    };
-    const value = this.#vault.valueOf(id);
-    if (value === undefined) {
-      const message = '<p>No value is stored for this identity. It was forgotten, or it was seen before values were stored.</p>';
-      return new Response(revealPage(message), { status: 404, headers });
+    return this.#shell();
+  }
+
+  // The stored value and its appearances for one identity. Returns 404 when no value is stored.
+  #values(request: Request, id: string): Response {
+    if (!this.#tokenMatches(request.headers.get('x-review-token'))) return new Response('invalid review token', { status: 403, headers: SENSITIVE_HEADERS });
+    if (!IDENTITY.test(id)) return new Response('invalid id', { status: 400, headers: SENSITIVE_HEADERS });
+    if (this.#vault.valueOf(id) === undefined) {
+      return Response.json({ error: 'no value stored' }, { status: 404, headers: SENSITIVE_HEADERS });
     }
-    return new Response(revealPage(revealBody(this.#vault.contextsOf(id))), { headers });
+    return Response.json({ contexts: this.#vault.contextsOf(id) }, { headers: SENSITIVE_HEADERS });
   }
 
   #tokenMatches(supplied: string | null): boolean {
@@ -179,9 +181,9 @@ export class ReviewSurface {
     return given.length === expected.length && timingSafeEqual(given, expected);
   }
 
-  // One page of items for a status filter (pending by default), PAGE_SIZE rows per page.
+  // One page of rows for a status filter (pending by default), PAGE_SIZE rows per page.
   // The search text (q) matches ID, source, status and last line, case-insensitively, across all items before paging.
-  #page(url: URL): string {
+  #page(url: URL) {
     const requested = url.searchParams.get('status') ?? 'pending';
     const filter = FILTERS.includes(requested) ? requested : 'pending';
     const query = (url.searchParams.get('q') ?? '').trim();
@@ -190,119 +192,25 @@ export class ReviewSurface {
     const counts: Record<string, number> = { all: all.length, pending: 0, secret: 0, not_secret: 0 };
     for (const item of all) counts[item.status] += 1;
     const byStatus = filter === 'all' ? all : all.filter((item) => item.status === filter);
+    const rowsOf = byStatus.map((item) => ({ item, lastLine: this.#vault.lastLineOf(item.id) ?? null }));
     const matching = needle === ''
-      ? byStatus
-      : byStatus.filter((item) => {
-          const line = this.#vault.lastLineOf(item.id) ?? '';
-          return [item.id, item.source, item.status, line].some((field) => field.toLowerCase().includes(needle));
-        });
+      ? rowsOf
+      : rowsOf.filter(({ item, lastLine }) =>
+          [item.id, item.source, item.status, lastLine ?? ''].some((field) => field.toLowerCase().includes(needle)));
     const pages = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
     const asked = Number.parseInt(url.searchParams.get('page') ?? '1', 10);
     const page = Number.isFinite(asked) ? Math.min(Math.max(asked, 1), pages) : 1;
     const start = (page - 1) * PAGE_SIZE;
-    const shown = matching.slice(start, start + PAGE_SIZE);
-    const search = query === '' ? '' : `&q=${encodeURIComponent(query)}`;
-    const link = (status: string, pageNumber: number) => `/review?status=${status}&page=${pageNumber}${search}`;
-    const tabs = [
-      ['pending', 'Pending'],
-      ['secret', 'Secret'],
-      ['not_secret', 'Not a secret'],
-      ['all', 'All'],
-    ]
-      .map(([status, label]) => `<a href="${link(status, 1)}"${status === filter ? ' aria-current="page"' : ''}>${label} (${counts[status]})</a>`)
-      .join(' · ');
-    const empty = query === '' ? 'No items.' : `No items match "${escapeHtml(query)}".`;
-    const range = matching.length === 0 ? empty : `Showing ${start + 1}-${start + shown.length} of ${matching.length}.`;
-    const searchForm = `<form method="get" action="/review" role="search">
-  <input type="hidden" name="status" value="${filter}">
-  <label for="search">Search</label>
-  <input id="search" type="search" name="q" value="${escapeHtml(query)}" placeholder="ID, source, status or last line">
-  <button type="submit">Search</button>
-  ${query === '' ? '' : `<a href="/review?status=${filter}">Clear</a>`}
-</form>`;
-    const pager = pages > 1
-      ? `<p>${page > 1 ? `<a href="${link(filter, page - 1)}">Previous</a> ` : ''}Page ${page} of ${pages}${page < pages ? ` <a href="${link(filter, page + 1)}">Next</a>` : ''}</p>`
-      : '';
-    const rows = shown
-      .map((item) => {
-        const short = item.id.slice(0, 12);
-        const line = this.#vault.lastLineOf(item.id);
-        const stored = this.#vault.valueOf(item.id) !== undefined;
-        const reveal = stored
-          ? `<a href="/review/reveal/${item.id}?token=${this.#token}" target="_blank" rel="noopener noreferrer">Show value</a>
-    <button onclick="forget('${item.id}')">Forget value</button>`
-          : '<span>value not stored</span>';
-        return `<tr>
-  <td><code>${short}</code></td>
-  <td>${item.status}</td>
-  <td>${escapeHtml(item.source)}</td>
-  <td class="line">${line === undefined ? '<span>not stored</span>' : escapeHtml(line)}</td>
-  <td>${item.length}</td>
-  <td>${escapeHtml(item.firstSeen)}</td>
-  <td>
-    <button onclick="answer('${item.id}', 'secret')">Secret</button>
-    <button onclick="answer('${item.id}', 'not_secret')">Not a secret</button>
-    ${reveal}
-  </td>
-</tr>`;
-      })
-      .join('\n');
-    return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Secret review</title>
-<style>
-:root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fff; --line: #d0d0d5; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fg: #f2f2f4; --bg: #161618; --line: #3a3a40; } }
-:root[data-theme="dark"] { --fg: #f2f2f4; --bg: #161618; --line: #3a3a40; }
-body { font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 16px; }
-table { border-collapse: collapse; width: 100%; }
-th, td { border-bottom: 1px solid var(--line); padding: 6px; text-align: left; font-size: 14px; }
-button { margin-right: 6px; }
-form[role="search"] { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-form[role="search"] input[type="search"] { flex: 1 1 220px; min-width: 0; padding: 4px 6px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); }
-td.line { overflow-wrap: anywhere; }
-@media (max-width: 640px) { th:nth-child(6), td:nth-child(6) { display: none; } }
-</style>
-</head>
-<body>
-<h1>Secret review</h1>
-<p>Pending and masked items stay masked. "Not a secret" shows the value from the next request onward. Earlier parts of each conversation keep their placeholders.
-"Last line" is the last line that referenced the value, with the value shown as its placeholder. "Show value" opens a new page with the value highlighted in the line it came from. Values and lines are stored on this machine, in values.sqlite. "Forget value" deletes the stored value and its lines and keeps the status.</p>
-${tabs}
-${searchForm}
-<p>${range}</p>
-${pager}
-<table>
-<thead><tr><th>ID</th><th>Status</th><th>Source</th><th>Last line</th><th>Length</th><th>First seen</th><th>Answer</th></tr></thead>
-<tbody>
-${rows || '<tr><td colspan="7">Nothing to show.</td></tr>'}
-</tbody>
-</table>
-<script>
-const TOKEN = ${JSON.stringify(this.#token)};
-async function answer(id, status) {
-  const response = await fetch('/review/answer', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-review-token': TOKEN },
-    body: JSON.stringify({ id, status }),
-  });
-  if (response.ok) location.reload();
-}
-async function forget(id) {
-  if (!confirm('Delete the stored value and its lines? The status stays.')) return;
-  const response = await fetch('/review/forget', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-review-token': TOKEN },
-    body: JSON.stringify({ id }),
-  });
-  if (response.ok) location.reload();
-}
-</script>
-</body>
-</html>`;
+    const rows: ReviewRow[] = matching.slice(start, start + PAGE_SIZE).map(({ item, lastLine }) => ({
+      id: item.id,
+      status: item.status,
+      source: item.source,
+      length: item.length,
+      firstSeen: item.firstSeen,
+      lastLine,
+      stored: this.#vault.valueOf(item.id) !== undefined,
+    }));
+    return { filter, query, counts, total: matching.length, page, pages, start, pageSize: PAGE_SIZE, rows };
   }
 }
 

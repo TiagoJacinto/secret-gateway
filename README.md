@@ -12,7 +12,7 @@ The Responses adapter scans instructions, messages, tool results, tool arguments
 
 This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service runs from the main checkout, `~/Desktop/repos/secret-gateway`, set by `WorkingDirectory` in `~/.config/systemd/user/secret-gateway.service`. Changes take effect there only after they are merged to `main`, pulled into that checkout, and the service is restarted.
 
-Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
+Personal use, on one machine. Bun and TypeScript for the gateway. The review page is a React and TypeScript app built with Vite and the React Compiler. The gateway listens on loopback only.
 
 ## What it does
 
@@ -28,7 +28,7 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 
 ## Setup
 
-Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscription (`claude auth status` should show `loggedIn: true`). No API key is needed.
+Requirements: Bun 1.3 or later, Node.js 20.19 or later (or 22.12 or later) for Vite, Claude Code logged in with your Claude subscription (`claude auth status` should show `loggedIn: true`). No API key is needed.
 
 1. Install the provider scanner into `.tools/bin` (gitignored). The version is Betterleaks 1.9.0 and the archive checksum is `f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7`.
 
@@ -40,7 +40,7 @@ Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscript
    .tools/bin/betterleaks version
    ```
 
-2. The gateway has no npm dependencies. Bun runs it directly, so there is no install step.
+2. Install the dependencies once from the repository root with `bun install`. They are Vite, React, TypeScript and the React Compiler, used to build the review page into `web/dist` (gitignored).
 
 3. Enable the pre-commit secret check. Install [lefthook](https://lefthook.dev) and [gitleaks](https://github.com/gitleaks/gitleaks) on your PATH, then run `lefthook install` in the repository root once. A commit with a staged secret is then blocked.
 
@@ -52,6 +52,8 @@ Start the gateway in its own terminal. It keeps running until you stop it. Ctrl+
 cd /path/to/secret-gateway
 bun run start
 ```
+
+`bun run start` first builds the review page with Vite, then starts the gateway. To build it alone, run `bun run build:web`. To type-check the review page, run `bun run typecheck`. Both need the step 2 install. Serving `/review` before a build returns 503 until `bun run build:web` runs.
 
 It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. The same lines go to `gateway.log` in the data directory (mode 0600), When the file passes 10 MB, the gateway moves it to `gateway.log.1` (replacing the previous `.1`) and starts a new one. Each proxied request has one line, for example `POST /v1/messages 200 412ms masked=1 session=3f9a1c2e`. Each new detection (`pending <identity prefix> from <source> (length N)`) and each review answer (`review answer <identity prefix> <status>`) has one line too. Lines hold counts and 8-character identity or session prefixes, never values or message text. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, `RESPONSES_UPSTREAM_BASE_URL=https://chatgpt.com/backend-api/codex`, data in `~/.local/share/secret-gateway`. The data directory holds `identity.key` (mode 0600, the HMAC key), `review.token` (mode 0600, the review token), `answers.sqlite` (statuses and conversation records, no values), `values.sqlite` (mode 0600, the masked values, their appearances and last lines) and `gateway.log` (mode 0600). Change the defaults with environment variables, and see the verification README for the full list.
 

@@ -259,7 +259,7 @@ class Gateway:
 
     def token(self):
         _, _, page = http('GET', f'{self.url}/review', headers=self.host())
-        match = re.search(rb'const TOKEN = "([0-9a-f]+)"', page)
+        match = re.search(rb'<meta name="review-token" content="([0-9a-f]+)">', page)
         return match.group(1).decode() if match else None
 
     def answer(self, identity, status):
@@ -269,6 +269,18 @@ class Gateway:
     def advance(self, ms):
         status, _, _ = http('POST', f'{self.url}/__test/advance?ms={ms}', body=b'', timeout=30)
         ensure(status == 200, f'clock advance by {ms} ms returned {status}')
+
+
+def review_page(gw, status='all'):
+    return json.loads(http('GET', f'{gw.url}/review/page?status={status}', headers=gw.host())[2])
+
+
+def review_values(gw, identity, token):
+    return http('GET', f'{gw.url}/review/values/{identity}', headers={**gw.host(), 'x-review-token': token})
+
+
+def shown_text(context):
+    return '\n'.join([*context['above'], context['before'] + context['value'] + context['after'], *context['below']])
 
 
 def identity_of(data_dir, value):
@@ -497,8 +509,8 @@ def j_text_links(ctx):
         ensure(status == 200, f'streamed text-links request returned {status}')
         checks.append(ensure(text_deltas_from_sse(parse_sse(raw)) == expected,
                              'streaming: the same text when placeholders split across 5-character fragments'))
-        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
-        last_line = f'<td class="line">After link: [docs](https://example.com) then {placeholder}</td>'
+        page = http('GET', f'{gw.url}/review/page?status=pending', headers=gw.host())[2]
+        last_line = f'After link: [docs](https://example.com) then {placeholder}'
         checks.append(ensure(last_line.encode() in page and secret.encode() not in page,
                              'review table: last line of the reply, shown with its placeholder and no review link'))
     return checks
@@ -898,11 +910,13 @@ def j_review(ctx):
         listing = http('GET', f'{gw.url}/review/items', headers=gw.host())[2].decode()
         checks.append(ensure(not any(v in listing or v[-20:] in listing for v in values.values()),
                              'review item listing contains no values'))
-        _, _, page = http('GET', f'{gw.url}/review', headers=gw.host())
-        checks.append(ensure(b'Secret review' in page and not any(v.encode() in page for v in values.values()),
+        shell = http('GET', f'{gw.url}/review', headers=gw.host())[2]
+        page = http('GET', f'{gw.url}/review/page?status=all', headers=gw.host())[2]
+        checks.append(ensure(b'name="review-token"' in shell and b'Secret review' in shell
+                             and not any(v.encode() in shell + page for v in values.values()),
                              'review page renders and contains no values'))
-        last_line = f'<td class="line">a ⟦SECRET_{ids["github"][:6]}⟧</td>'
-        checks.append(ensure(last_line.encode() in page,
+        github_row = next(r for r in json.loads(page)['rows'] if r['id'] == ids['github'])
+        checks.append(ensure(github_row['lastLine'] == f'a ⟦SECRET_{ids["github"][:6]}⟧',
                              'review table shows the last line that referenced each value, with its placeholder'))
 
         token = gw.token()
@@ -945,46 +959,57 @@ def j_review(ctx):
                              'another conversation sees "Not a secret" unmasked from its first message'))
 
         reveal = {name: f'/review/reveal/{ids[name]}?token={token}' for name in values}
-        _, _, page = http('GET', f'{gw.url}/review?status=all', headers=gw.host())
-        checks.append(ensure(all(f'href="{link}"'.encode() in page for link in reveal.values()),
-                             'review page links each held value to its reveal page'))
-        _, _, pending = http('GET', f'{gw.url}/review', headers=gw.host())
-        checks.append(ensure(f'href="{reveal["cloudflare"]}"'.encode() in pending
-                             and not any(f'href="{reveal[name]}"'.encode() in pending for name in ('github', 'anthropic')),
+        rows = {r['id']: r for r in review_page(gw)['rows']}
+        checks.append(ensure(all(rows.get(ids[name], {}).get('stored') is True for name in values),
+                             'review page marks each held value as stored, so it can link to its reveal page'))
+        pending_ids = [r['id'] for r in review_page(gw, 'pending')['rows']]
+        checks.append(ensure(pending_ids == [ids['cloudflare']],
                              'review opens on pending items only; answered items sit under their own filter'))
         status, headers, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
-        checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
-                             'reveal page with the token shows the value highlighted in its line'))
+        checks.append(ensure(status == 200 and b'name="review-token"' in body and values['github'].encode() not in body,
+                             'reveal page with the token is served the review page, with no value in it'))
         checks.append(ensure(headers.get('cache-control') == 'no-store' and headers.get('referrer-policy') == 'no-referrer',
                              'reveal page is served no-store and no-referrer'))
+        status, headers, body = review_values(gw, ids['github'], token)
+        checks.append(ensure(status == 200 and any(c['value'] == values['github'] and c['before'] + c['value'] + c['after'] == f'a {values["github"]}'
+                                                   for c in json.loads(body)['contexts']),
+                             'reveal data with the token holds the value in its line'))
+        checks.append(ensure(headers.get('cache-control') == 'no-store' and headers.get('referrer-policy') == 'no-referrer',
+                             'reveal data is served no-store and no-referrer'))
         status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}', headers=gw.host())
         checks.append(ensure(status == 403 and values['github'].encode() not in body,
                              'reveal without the review token is refused, with no value'))
         status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token=wrong', headers=gw.host())
         checks.append(ensure(status == 403 and values['github'].encode() not in body,
                              'reveal with a wrong token is refused, with no value'))
+        status, _, body = review_values(gw, ids["github"], 'wrong')
+        checks.append(ensure(status == 403 and values['github'].encode() not in body,
+                             'reveal data with a wrong token is refused, with no value'))
         status, _, _ = http('GET', f'{gw.url}{reveal["github"]}', headers={'Host': f'evil.example:{gw.port}'})
         checks.append(ensure(status == 403, 'reveal page refuses a foreign Host'))
         messages_request(gw, [user(f'd {values["cloudflare"]} {values["anthropic"]}')])
-        _, _, body = http('GET', f'{gw.url}/review/reveal/{ids["cloudflare"]}?token={token}', headers=gw.host())
-        checks.append(ensure(f'<mark>{values["cloudflare"]}</mark>'.encode() in body and values['anthropic'].encode() not in body
-                             and '⟦SECRET_'.encode() in body,
+        _, _, body = review_values(gw, ids["cloudflare"], token)
+        checks.append(ensure(any(c['value'] == values['cloudflare'] and '⟦SECRET_' in c['before'] + c['after']
+                                 for c in json.loads(body)['contexts'])
+                             and values['anthropic'].encode() not in body,
                              'reveal line shows another masked value on the same line as a placeholder'))
         messages_request(gw, [user(f'first line\nsecond line\nthird {values["cloudflare"]}\n'
                                    f'fourth {values["anthropic"]}\nfifth line\nsixth line')])
-        _, _, body = http('GET', f'{gw.url}/review/reveal/{ids["cloudflare"]}?token={token}', headers=gw.host())
+        _, _, body = review_values(gw, ids["cloudflare"], token)
         checks.append(ensure(b'second line' in body and b'fourth' in body and b'first line' not in body
                              and b'fifth line' not in body, 'reveal shows the nearest non-empty line above and below'))
         gap = '\n' * 5
         messages_request(gw, [user(f'The command printed:{gap}DATABASE_URL={values["cloudflare"]}{gap}The output follows')])
-        _, _, body = http('GET', f'{gw.url}/review/reveal/{ids["cloudflare"]}?token={token}', headers=gw.host())
-        checks.append(ensure(f'The command printed:{gap}DATABASE_URL=<mark>{values["cloudflare"]}</mark>{gap}The output follows'
-                             .encode() in body, 'reveal keeps empty lines between the context lines and the value'))
-        checks.append(ensure(b'user message, message' in body, 'each appearance shows where it is in the session'))
+        _, _, body = review_values(gw, ids["cloudflare"], token)
+        contexts = json.loads(body)['contexts']
+        checks.append(ensure(any(shown_text(c) == f'The command printed:{gap}DATABASE_URL={values["cloudflare"]}{gap}The output follows'
+                                 for c in contexts), 'reveal keeps empty lines between the context lines and the value'))
+        checks.append(ensure(any('user message, message' in c['location'] for c in contexts),
+                             'each appearance shows where it is in the session'))
         checks.append(ensure(values['anthropic'].encode() not in body,
                              'lines above and below mask other secrets as placeholders'))
-        checks.append(ensure(b'<h2>Value</h2>' not in body and b'<h2>Where it appears</h2>' in body,
-                             'reveal page shows only the lines where the value appears'))
+        checks.append(ensure(set(json.loads(body)) == {'contexts'},
+                             'reveal data holds only the lines where the value appears'))
         _, _, reply = messages_request(gw, [user(f'link {values["cloudflare"]}')])
         text = ''.join(block['text'] for block in json.loads(reply)['content'] if block['type'] == 'text')
         expected_link = (f'[⟦SECRET_{ids["cloudflare"][:6]}⟧](http://127.0.0.1:{gw.port}'
@@ -1012,12 +1037,12 @@ def j_review(ctx):
             mode = os.stat(data / name).st_mode & 0o777
             checks.append(ensure(mode == 0o600, f'{name} is owner-only (mode {oct(mode)})'))
         checks.append(ensure(gw.token() == token, 'the review token is the same after a restart'))
-        status, _, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
-        checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
-                             'after a restart, reveal still shows the value highlighted in its line, from the value store'))
-        _, _, page = http('GET', f'{gw.url}/review?status=all', headers=gw.host())
-        checks.append(ensure(f'<td class="line">a ⟦SECRET_{ids["github"][:6]}⟧</td>'.encode() in page
-                             and values['github'].encode() not in page,
+        status, _, body = review_values(gw, ids["github"], token)
+        checks.append(ensure(status == 200 and values['github'].encode() in body,
+                             'after a restart, reveal data still holds the value in its line, from the value store'))
+        page = http('GET', f'{gw.url}/review/page?status=all', headers=gw.host())[2]
+        github_row = next(r for r in json.loads(page)['rows'] if r['id'] == ids['github'])
+        checks.append(ensure(github_row['lastLine'] == f'a ⟦SECRET_{ids["github"][:6]}⟧' and values['github'].encode() not in page,
                              'after a restart, the review table still shows the last line, with no value'))
         status, _, body = http('POST', f'{gw.url}/review/forget', body={'id': ids['github']},
                                headers={**gw.host(), 'Content-Type': 'application/json'})
@@ -1031,12 +1056,12 @@ def j_review(ctx):
         status, _, body = http('POST', f'{gw.url}/review/forget', body={'id': ids['github']},
                                headers={**gw.host(), 'x-review-token': token})
         checks.append(ensure(status == 200 and json.loads(body)['deleted'] is True, 'forget deletes the stored value'))
-        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={token}', headers=gw.host())
-        checks.append(ensure(status == 404 and b'No value is stored' in body and values['github'].encode() not in body,
-                             'after forget, reveal says no value is stored, with no value'))
-        _, _, page = http('GET', f'{gw.url}/review?status=all', headers=gw.host())
-        checks.append(ensure(b'<span>value not stored</span>' in page and b'<td class="line"><span>not stored</span></td>' in page
-                             and values['github'].encode() not in page,
+        status, _, body = review_values(gw, ids["github"], token)
+        checks.append(ensure(status == 404 and b'no value stored' in body and values['github'].encode() not in body,
+                             'after forget, reveal data says no value is stored, with no value'))
+        page = http('GET', f'{gw.url}/review/page?status=all', headers=gw.host())[2]
+        forgotten = next(r for r in json.loads(page)['rows'] if r['id'] == ids['github'])
+        checks.append(ensure(forgotten['stored'] is False and forgotten['lastLine'] is None and values['github'].encode() not in page,
                              'after forget, the review table shows no value and no last line'))
         checks.append(ensure(status_by_id.get(ids['github']) == 'not_secret',
                              'forget keeps the answer "Not a secret"'))
@@ -1047,8 +1072,9 @@ def j_review(ctx):
         checks.append(ensure(values['github'] in newest and placeholder in sent and sent.count(values['github']) == 1,
                              'after a restart, "Not a secret" still masks messages sent before the answer'))
         checks.append(ensure(values['anthropic'] not in sent, '"Secret" stays masked after a restart'))
-        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={token}', headers=gw.host())
-        checks.append(ensure(status == 200 and f'a <mark>{values["github"]}</mark>'.encode() in body,
+        status, _, body = review_values(gw, ids["github"], token)
+        checks.append(ensure(status == 200 and any(c['value'] == values['github'] and c['before'] + c['value'] + c['after'] == f'a {values["github"]}'
+                                                   for c in json.loads(body)['contexts']),
                              'a later request that sends the forgotten value masked stores it again'))
     return checks
 

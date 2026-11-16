@@ -5,9 +5,25 @@
   "description": "Local masking gateway between Claude Code and the Anthropic Messages API",
   "type": "module",
   "scripts": {
-    "start": "bun run src/main.ts",
+    "start": "bun run build:web && bun run src/main.ts",
+    "build:web": "vite build",
+    "typecheck": "tsc -p tsconfig.json",
     "exempt": "bun run src/exempt.ts",
     "detect": "bun run src/detect-cli.ts",
     "check:secrets": "gitleaks detect --redact --exit-code 1 --no-banner --log-opts=--all"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.1.2",
+    "@rolldown/plugin-babel": "^0.3.1",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "@vitejs/plugin-react": "6.3.0",
+    "babel-plugin-react-compiler": "1.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.8"
   }
 }
