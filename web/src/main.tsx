@@ -1,13 +1,25 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter, Route, Routes } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './styles.css';
 import { ReviewList } from './ReviewList';
 import { RevealPage } from './RevealPage';
 
-const reveal = window.location.pathname.match(/^\/review\/reveal\/([0-9a-f]{64})$/);
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+});
 
+// The gateway serves this page under /review, so the router uses that as its basename.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {reveal ? <RevealPage id={reveal[1]} /> : <ReviewList />}
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter basename="/review">
+        <Routes>
+          <Route index element={<ReviewList />} />
+          <Route path="reveal/:id" element={<RevealPage />} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
   </StrictMode>,
 );

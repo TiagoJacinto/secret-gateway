@@ -49,6 +49,7 @@ const review = new ReviewSurface({
   vault,
   now,
   port: config.port,
+  webOrigin: config.reviewWebOrigin,
   token: reviewToken,
   onAnswer: (id, status) => {
     log(`review answer ${id.slice(0, 8)} ${status}`);

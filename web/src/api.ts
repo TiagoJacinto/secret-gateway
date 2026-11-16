@@ -1,4 +1,4 @@
-// Calls to the gateway's review endpoints. The review token comes from the meta tag the gateway adds to the page.
+// Calls to the gateway's JSON endpoints. The page runs on its own origin, so every request uses the gateway's absolute URL.
 export type Status = 'pending' | 'secret' | 'not_secret';
 export type Filter = Status | 'all';
 
@@ -34,19 +34,34 @@ export type Context = {
   below: string[];
 };
 
-export const token: string = document.querySelector<HTMLMetaElement>('meta[name="review-token"]')?.content ?? '';
+// Set at build time. The default matches the gateway's default PORT.
+const GATEWAY = (import.meta.env.VITE_GATEWAY_URL ?? 'http://127.0.0.1:8787').replace(/\/$/, '');
 
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
   return (await response.json()) as T;
 }
 
+// The review token, read once from the gateway. The gateway answers only the page's origin.
+let sessionToken: Promise<string> | undefined;
+export function fetchSessionToken(): Promise<string> {
+  sessionToken ??= fetch(`${GATEWAY}/review/session`)
+    .then((response) => json<{ token: string }>(response))
+    .then((body) => body.token)
+    .catch((error: unknown) => {
+      sessionToken = undefined;
+      throw error;
+    });
+  return sessionToken;
+}
+
 export async function fetchPage(search: string): Promise<ReviewPage> {
-  return json(await fetch(`/review/page${search}`));
+  return json(await fetch(`${GATEWAY}/review/page${search}`));
 }
 
 export async function answer(id: string, status: 'secret' | 'not_secret'): Promise<void> {
-  await json(await fetch('/review/answer', {
+  const token = await fetchSessionToken();
+  await json(await fetch(`${GATEWAY}/review/answer`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-review-token': token },
     body: JSON.stringify({ id, status }),
@@ -54,21 +69,23 @@ export async function answer(id: string, status: 'secret' | 'not_secret'): Promi
 }
 
 export async function forget(id: string): Promise<void> {
-  await json(await fetch('/review/forget', {
+  const token = await fetchSessionToken();
+  await json(await fetch(`${GATEWAY}/review/forget`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-review-token': token },
     body: JSON.stringify({ id }),
   }));
 }
 
-// Returns undefined when no value is stored for the identity.
-export async function fetchContexts(id: string): Promise<Context[] | undefined> {
-  const response = await fetch(`/review/values/${id}`, { headers: { 'x-review-token': token } });
-  if (response.status === 404) return undefined;
+// Returns null when no value is stored for the identity (the gateway answers 404).
+export async function fetchContexts(id: string, token: string): Promise<Context[] | null> {
+  const response = await fetch(`${GATEWAY}/review/values/${id}`, { headers: { 'x-review-token': token } });
+  if (response.status === 404) return null;
   const body = await json<{ contexts: Context[] }>(response);
   return body.contexts;
 }
 
-export function revealHref(id: string): string {
+// The reveal page is on this origin. Its token comes from the link, as the gateway's reveal links carry it.
+export function revealHref(id: string, token: string): string {
   return `/review/reveal/${id}?token=${encodeURIComponent(token)}`;
 }

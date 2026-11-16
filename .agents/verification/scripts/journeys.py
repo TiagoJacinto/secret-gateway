@@ -32,7 +32,8 @@ ROOT =Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / '.agents/verification/fixtures'
 EVIDENCE = Path.home() / '.agents/projects/secret-gateway/goals/issue-1/evidence'
 PLACEHOLDER = re.compile(r'⟦SECRET_[0-9a-f]{6,64}⟧')
-REVIEW_LINK = re.compile(r'\[⟦SECRET_[0-9a-f]{6,64}⟧\]\(http://127\.0\.0\.1:\d+/review/reveal/[0-9a-f]{64}\?token=[0-9a-f]{32}\)')
+WEB_ORIGIN = 'http://127.0.0.1:8788'  # the review page, served on its own origin
+REVIEW_LINK = re.compile(r'\[⟦SECRET_[0-9a-f]{6,64}⟧\]\(http://127\.0\.0\.1:8788/review/reveal/[0-9a-f]{64}\?token=[0-9a-f]{32}\)')
 PROVIDER_KEY = re.compile(r'^(npg_|cfut_|GOCSPX-|ya29\.|ghp_|github_pat_|sk-ant-|AKIA|sk_live_)')
 COMMAND = shlex.split(os.environ.get('GATEWAY_COMMAND', 'bun run start'))
 # A last user message that starts with this prefix is echoed back as the reply text, with no tool calls.
@@ -258,9 +259,8 @@ class Gateway:
         return {'Host': f'127.0.0.1:{self.port}'}
 
     def token(self):
-        _, _, page = http('GET', f'{self.url}/review', headers=self.host())
-        match = re.search(rb'<meta name="review-token" content="([0-9a-f]+)">', page)
-        return match.group(1).decode() if match else None
+        status, _, body = http('GET', f'{self.url}/review/session', headers={**self.host(), 'Origin': WEB_ORIGIN})
+        return json.loads(body)['token'] if status == 200 else None
 
     def answer(self, identity, status):
         return http('POST', f'{self.url}/review/answer', body={'id': identity, 'status': status},
@@ -491,7 +491,7 @@ def j_text_links(ctx):
     with gateway(upstream.url, env=ctx['env']) as gw:
         identity = identity_of(gw.data_dir, secret)
         placeholder = f'⟦SECRET_{identity[:6]}⟧'
-        link = f'[{placeholder}](http://127.0.0.1:{gw.port}/review/reveal/{identity}?token={gw.token()})'
+        link = f'[{placeholder}]({WEB_ORIGIN}/review/reveal/{identity}?token={gw.token()})'
         expected = (f'Link text: [token {placeholder}](https://example.com/docs)\n'
                     f'Bare URL: https://github.com/acme/repo?token={placeholder}\n'
                     f'Plain: {link} done\n'
@@ -910,11 +910,15 @@ def j_review(ctx):
         listing = http('GET', f'{gw.url}/review/items', headers=gw.host())[2].decode()
         checks.append(ensure(not any(v in listing or v[-20:] in listing for v in values.values()),
                              'review item listing contains no values'))
-        shell = http('GET', f'{gw.url}/review', headers=gw.host())[2]
+        page_status = http('GET', f'{gw.url}/review', headers=gw.host())[0]
         page = http('GET', f'{gw.url}/review/page?status=all', headers=gw.host())[2]
-        checks.append(ensure(b'name="review-token"' in shell and b'Secret review' in shell
-                             and not any(v.encode() in shell + page for v in values.values()),
-                             'review page renders and contains no values'))
+        checks.append(ensure(page_status == 404 and not any(v.encode() in page for v in values.values()),
+                             'gateway serves no HTML at /review, and its JSON holds no values'))
+        token_reply = http('GET', f'{gw.url}/review/session', headers={**gw.host(), 'Origin': WEB_ORIGIN})
+        checks.append(ensure(token_reply[0] == 200 and json.loads(token_reply[2])['token'] == gw.token()
+                             and http('GET', f'{gw.url}/review/session', headers=gw.host())[0] == 403
+                             and http('GET', f'{gw.url}/review/session', headers={**gw.host(), 'Origin': 'http://evil.test'})[0] == 403,
+                             'session token goes only to the web origin'))
         github_row = next(r for r in json.loads(page)['rows'] if r['id'] == ids['github'])
         checks.append(ensure(github_row['lastLine'] == f'a ⟦SECRET_{ids["github"][:6]}⟧',
                              'review table shows the last line that referenced each value, with its placeholder'))
@@ -929,8 +933,8 @@ def j_review(ctx):
         status, _, _ = http('POST', f'{gw.url}/review/answer', body={'id': ids['github'], 'status': 'maybe'},
                             headers={**gw.host(), 'x-review-token': token})
         checks.append(ensure(status == 400, 'answer with an unknown status is refused'))
-        status, _, _ = http('GET', f'{gw.url}/review', headers={'Host': f'evil.example:{gw.port}'})
-        checks.append(ensure(status == 403, 'review page refuses a foreign Host (DNS rebinding)'))
+        status, _, _ = http('GET', f'{gw.url}/review/page', headers={'Host': f'evil.example:{gw.port}'})
+        checks.append(ensure(status == 403, 'review JSON refuses a foreign Host (DNS rebinding)'))
 
         status, _, body = gw.answer(ids['github'], 'not_secret')
         checks.append(ensure(status == 200 and json.loads(body)['updated'] is True, 'answer "Not a secret" is accepted'))
@@ -958,35 +962,24 @@ def j_review(ctx):
         checks.append(ensure(values['github'] in forwarded_text(upstream),
                              'another conversation sees "Not a secret" unmasked from its first message'))
 
-        reveal = {name: f'/review/reveal/{ids[name]}?token={token}' for name in values}
         rows = {r['id']: r for r in review_page(gw)['rows']}
         checks.append(ensure(all(rows.get(ids[name], {}).get('stored') is True for name in values),
                              'review page marks each held value as stored, so it can link to its reveal page'))
         pending_ids = [r['id'] for r in review_page(gw, 'pending')['rows']]
         checks.append(ensure(pending_ids == [ids['cloudflare']],
                              'review opens on pending items only; answered items sit under their own filter'))
-        status, headers, body = http('GET', f'{gw.url}{reveal["github"]}', headers=gw.host())
-        checks.append(ensure(status == 200 and b'name="review-token"' in body and values['github'].encode() not in body,
-                             'reveal page with the token is served the review page, with no value in it'))
-        checks.append(ensure(headers.get('cache-control') == 'no-store' and headers.get('referrer-policy') == 'no-referrer',
-                             'reveal page is served no-store and no-referrer'))
+        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token={token}', headers=gw.host())
+        checks.append(ensure(status == 404 and values['github'].encode() not in body,
+                             'gateway serves no reveal page, so the reveal link opens on the web origin'))
         status, headers, body = review_values(gw, ids['github'], token)
         checks.append(ensure(status == 200 and any(c['value'] == values['github'] and c['before'] + c['value'] + c['after'] == f'a {values["github"]}'
                                                    for c in json.loads(body)['contexts']),
                              'reveal data with the token holds the value in its line'))
         checks.append(ensure(headers.get('cache-control') == 'no-store' and headers.get('referrer-policy') == 'no-referrer',
                              'reveal data is served no-store and no-referrer'))
-        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}', headers=gw.host())
-        checks.append(ensure(status == 403 and values['github'].encode() not in body,
-                             'reveal without the review token is refused, with no value'))
-        status, _, body = http('GET', f'{gw.url}/review/reveal/{ids["github"]}?token=wrong', headers=gw.host())
-        checks.append(ensure(status == 403 and values['github'].encode() not in body,
-                             'reveal with a wrong token is refused, with no value'))
         status, _, body = review_values(gw, ids["github"], 'wrong')
         checks.append(ensure(status == 403 and values['github'].encode() not in body,
                              'reveal data with a wrong token is refused, with no value'))
-        status, _, _ = http('GET', f'{gw.url}{reveal["github"]}', headers={'Host': f'evil.example:{gw.port}'})
-        checks.append(ensure(status == 403, 'reveal page refuses a foreign Host'))
         messages_request(gw, [user(f'd {values["cloudflare"]} {values["anthropic"]}')])
         _, _, body = review_values(gw, ids["cloudflare"], token)
         checks.append(ensure(any(c['value'] == values['cloudflare'] and '⟦SECRET_' in c['before'] + c['after']
@@ -1012,7 +1005,7 @@ def j_review(ctx):
                              'reveal data holds only the lines where the value appears'))
         _, _, reply = messages_request(gw, [user(f'link {values["cloudflare"]}')])
         text = ''.join(block['text'] for block in json.loads(reply)['content'] if block['type'] == 'text')
-        expected_link = (f'[⟦SECRET_{ids["cloudflare"][:6]}⟧](http://127.0.0.1:{gw.port}'
+        expected_link = (f'[⟦SECRET_{ids["cloudflare"][:6]}⟧]({WEB_ORIGIN}'
                          f'/review/reveal/{ids["cloudflare"]}?token={token})')
         checks.append(ensure(expected_link in text, 'reply links the placeholder to the reveal page of its identity'))
         pending_before = len(gw.items())

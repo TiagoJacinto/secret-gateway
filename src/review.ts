@@ -1,17 +1,15 @@
-// Review surface on the gateway's own port: the React page (built by Vite into web/dist) and JSON endpoints.
+// Review surface on the gateway's own port. It serves JSON only. The React page lives in web/ and runs on its own origin,
+// which is the only browser origin allowed to call these endpoints.
 // Items show status, source, length, the last line where the value was referenced, and timestamps.
-// The reveal endpoint returns a value from the value store, and only with the review token.
+// The value endpoint returns a stored value, and only with the review token.
 import { timingSafeEqual } from 'node:crypto';
-import { join } from 'node:path';
 import type { AnswerStore, Item } from './store.ts';
 import type { SecretVault } from './vault.ts';
 
 const IDENTITY = /^[0-9a-f]{64}$/;
-const ASSET = /^[A-Za-z0-9._-]+$/;
 const ANSWERS = new Set(['secret', 'not_secret']);
 const FILTERS = ['pending', 'secret', 'not_secret', 'all'];
 const PAGE_SIZE = 100;
-const DIST = join(import.meta.dir, '..', 'web', 'dist');
 const SENSITIVE_HEADERS = {
   'cache-control': 'no-store',
   'referrer-policy': 'no-referrer',
@@ -32,9 +30,9 @@ export class ReviewSurface {
   readonly #vault: SecretVault;
   readonly #now: () => string;
   readonly #hosts: Set<string>;
-  readonly #origin: string;
+  readonly #webOrigin: string;
   readonly #onAnswer: (id: string, status: 'secret' | 'not_secret') => void;
-  // Kept in the data directory. Only a page served by this gateway can read it, so other sites cannot answer, forget or reveal.
+  // Kept in the data directory. Only the web page, which is allowed by origin, can read it, so other sites cannot answer, forget or reveal.
   readonly #token: string;
 
   constructor(options: {
@@ -42,6 +40,7 @@ export class ReviewSurface {
     vault: SecretVault;
     now: () => string;
     port: number;
+    webOrigin: string;
     token: string;
     onAnswer: (id: string, status: 'secret' | 'not_secret') => void;
   }) {
@@ -51,29 +50,37 @@ export class ReviewSurface {
     this.#onAnswer = options.onAnswer;
     this.#token = options.token;
     this.#hosts = new Set([`127.0.0.1:${options.port}`, `localhost:${options.port}`]);
-    this.#origin = `http://127.0.0.1:${options.port}`;
+    this.#webOrigin = options.webOrigin;
   }
 
+  // The review page, on the web origin. Notifications link here.
   get url(): string {
-    return `${this.#origin}/review`;
+    return `${this.#webOrigin}/review`;
   }
 
-  // Reveal link for a masked identity. The review token is part of it, as the reveal page requires.
+  // Reveal link for a masked identity. The page on the web origin reads the token from the link.
   revealUrl(identity: string): string {
-    return `${this.#origin}/review/reveal/${identity}?token=${this.#token}`;
+    return `${this.#webOrigin}/review/reveal/${identity}?token=${this.#token}`;
   }
 
   // Returns undefined for paths this surface does not own.
   async handle(request: Request, url: URL): Promise<Response | undefined> {
     if (url.pathname !== '/review' && !url.pathname.startsWith('/review/')) return undefined;
     if (!this.#hosts.has(request.headers.get('host') ?? '')) return new Response('forbidden host', { status: 403 });
+    return this.#withCors(request, await this.#route(request, url));
+  }
 
-    if (request.method === 'GET' && url.pathname === '/review') {
-      return this.#shell();
-    }
-    const asset = url.pathname.match(/^\/review\/assets\/([^/]+)$/);
-    if (request.method === 'GET' && asset && ASSET.test(asset[1])) {
-      return this.#asset(asset[1]);
+  // Shared with notification actions, which bypass HTTP and call this directly.
+  answer(id: string, status: 'secret' | 'not_secret'): boolean {
+    const updated = this.#store.answer(id, status, this.#now());
+    if (updated) this.#onAnswer(id, status);
+    return updated;
+  }
+
+  async #route(request: Request, url: URL): Promise<Response> {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
+    if (request.method === 'GET' && url.pathname === '/review/session') {
+      return this.#session(request);
     }
     if (request.method === 'GET' && url.pathname === '/review/items') {
       return Response.json(this.#store.list().map(publicItem));
@@ -87,10 +94,6 @@ export class ReviewSurface {
     if (request.method === 'POST' && url.pathname === '/review/forget') {
       return this.#forget(request);
     }
-    const reveal = url.pathname.match(/^\/review\/reveal\/([^/]+)$/);
-    if (request.method === 'GET' && reveal) {
-      return this.#revealPage(url, reveal[1]);
-    }
     const values = url.pathname.match(/^\/review\/values\/([^/]+)$/);
     if (request.method === 'GET' && values) {
       return this.#values(request, values[1]);
@@ -98,31 +101,20 @@ export class ReviewSurface {
     return new Response('not found', { status: 404 });
   }
 
-  // Shared with notification actions, which bypass HTTP and call this directly.
-  answer(id: string, status: 'secret' | 'not_secret'): boolean {
-    const updated = this.#store.answer(id, status, this.#now());
-    if (updated) this.#onAnswer(id, status);
-    return updated;
-  }
-
-  // The built React page. The review token goes into a meta tag, which the page reads for its POST and reveal requests.
-  async #shell(): Promise<Response> {
-    const file = Bun.file(join(DIST, 'index.html'));
-    if (!(await file.exists())) return new Response('review page not built; run bun run build:web', { status: 503 });
-    const html = (await file.text()).replace('</head>', `<meta name="review-token" content="${this.#token}">\n</head>`);
-    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', ...SENSITIVE_HEADERS } });
-  }
-
-  async #asset(name: string): Promise<Response> {
-    const file = Bun.file(join(DIST, 'assets', name));
-    if (!(await file.exists())) return new Response('not found', { status: 404 });
-    return new Response(file);
+  // Only the web origin may call the surface from a browser. Other origins get no CORS header, so the browser blocks their reads.
+  #withCors(request: Request, response: Response): Response {
+    if (request.headers.get('origin') !== this.#webOrigin) return response;
+    response.headers.set('access-control-allow-origin', this.#webOrigin);
+    response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.headers.set('access-control-allow-headers', 'content-type, x-review-token');
+    response.headers.set('vary', 'Origin');
+    return response;
   }
 
   // Checks the origin, token and JSON body that every POST endpoint needs. Returns the body or the refusal.
   async #post(request: Request): Promise<Response | Record<string, unknown>> {
     const origin = request.headers.get('origin');
-    if (origin !== null && origin !== this.#origin) return new Response('forbidden origin', { status: 403 });
+    if (origin !== null && origin !== this.#webOrigin) return new Response('forbidden origin', { status: 403 });
     if (!this.#tokenMatches(request.headers.get('x-review-token'))) {
       return new Response('invalid review token', { status: 403 });
     }
@@ -137,6 +129,12 @@ export class ReviewSurface {
     }
     if (typeof body !== 'object' || body === null) return new Response('invalid JSON', { status: 400 });
     return body as Record<string, unknown>;
+  }
+
+  // The token the web page needs for its requests. Only the web origin may read it.
+  #session(request: Request): Response {
+    if (request.headers.get('origin') !== this.#webOrigin) return new Response('forbidden origin', { status: 403, headers: SENSITIVE_HEADERS });
+    return Response.json({ token: this.#token }, { headers: SENSITIVE_HEADERS });
   }
 
   async #answer(request: Request): Promise<Response> {
@@ -156,13 +154,6 @@ export class ReviewSurface {
     if (body instanceof Response) return body;
     if (typeof body.id !== 'string' || !IDENTITY.test(body.id)) return new Response('invalid id', { status: 400 });
     return Response.json({ deleted: this.#vault.forget(body.id) });
-  }
-
-  // The reveal page is served only with the token in the URL. Its data comes from #values, which needs the token header.
-  async #revealPage(url: URL, id: string): Promise<Response> {
-    if (!this.#tokenMatches(url.searchParams.get('token'))) return new Response('invalid review token', { status: 403 });
-    if (!IDENTITY.test(id)) return new Response('invalid id', { status: 400 });
-    return this.#shell();
   }
 
   // The stored value and its appearances for one identity. Returns 404 when no value is stored.

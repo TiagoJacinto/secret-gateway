@@ -9,6 +9,8 @@ export type Config = {
   // Responses upstream, used by Codex. Codex reaches it through the /codex path prefix.
   responsesUpstreamBaseUrl: string;
   dataDir: string;
+  // Origin of the separately served review page (web/). The gateway allows browser access from this origin only.
+  reviewWebOrigin: string;
   testControl: boolean;
   manualClock: boolean;
   notifyRecordPath?: string;
@@ -28,6 +30,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     upstreamBaseUrl: (env.UPSTREAM_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, ''),
     responsesUpstreamBaseUrl: (env.RESPONSES_UPSTREAM_BASE_URL ?? 'https://chatgpt.com/backend-api/codex').replace(/\/$/, ''),
     dataDir: env.GATEWAY_DATA_DIR ?? join(homedir(), '.local', 'share', 'secret-gateway'),
+    reviewWebOrigin: (env.REVIEW_WEB_ORIGIN ?? 'http://127.0.0.1:8788').replace(/\/$/, ''),
     testControl: env.GATEWAY_TEST_CONTROL === '1',
     manualClock: env.GATEWAY_CLOCK === 'manual',
     notifyRecordPath: env.GATEWAY_NOTIFY_RECORD,
