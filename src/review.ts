@@ -180,19 +180,29 @@ export class ReviewSurface {
   }
 
   // One page of items for a status filter (pending by default), PAGE_SIZE rows per page.
+  // The search text (q) matches ID, source, status and last line, case-insensitively, across all items before paging.
   #page(url: URL): string {
     const requested = url.searchParams.get('status') ?? 'pending';
     const filter = FILTERS.includes(requested) ? requested : 'pending';
+    const query = (url.searchParams.get('q') ?? '').trim();
+    const needle = query.toLowerCase();
     const all = this.#store.list();
     const counts: Record<string, number> = { all: all.length, pending: 0, secret: 0, not_secret: 0 };
     for (const item of all) counts[item.status] += 1;
-    const matching = filter === 'all' ? all : all.filter((item) => item.status === filter);
+    const byStatus = filter === 'all' ? all : all.filter((item) => item.status === filter);
+    const matching = needle === ''
+      ? byStatus
+      : byStatus.filter((item) => {
+          const line = this.#vault.lastLineOf(item.id) ?? '';
+          return [item.id, item.source, item.status, line].some((field) => field.toLowerCase().includes(needle));
+        });
     const pages = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
     const asked = Number.parseInt(url.searchParams.get('page') ?? '1', 10);
     const page = Number.isFinite(asked) ? Math.min(Math.max(asked, 1), pages) : 1;
     const start = (page - 1) * PAGE_SIZE;
     const shown = matching.slice(start, start + PAGE_SIZE);
-    const link = (status: string, pageNumber: number) => `/review?status=${status}&page=${pageNumber}`;
+    const search = query === '' ? '' : `&q=${encodeURIComponent(query)}`;
+    const link = (status: string, pageNumber: number) => `/review?status=${status}&page=${pageNumber}${search}`;
     const tabs = [
       ['pending', 'Pending'],
       ['secret', 'Secret'],
@@ -201,7 +211,15 @@ export class ReviewSurface {
     ]
       .map(([status, label]) => `<a href="${link(status, 1)}"${status === filter ? ' aria-current="page"' : ''}>${label} (${counts[status]})</a>`)
       .join(' · ');
-    const range = matching.length === 0 ? 'No items.' : `Showing ${start + 1}-${start + shown.length} of ${matching.length}.`;
+    const empty = query === '' ? 'No items.' : `No items match "${escapeHtml(query)}".`;
+    const range = matching.length === 0 ? empty : `Showing ${start + 1}-${start + shown.length} of ${matching.length}.`;
+    const searchForm = `<form method="get" action="/review" role="search">
+  <input type="hidden" name="status" value="${filter}">
+  <label for="search">Search</label>
+  <input id="search" type="search" name="q" value="${escapeHtml(query)}" placeholder="ID, source, status or last line">
+  <button type="submit">Search</button>
+  ${query === '' ? '' : `<a href="/review?status=${filter}">Clear</a>`}
+</form>`;
     const pager = pages > 1
       ? `<p>${page > 1 ? `<a href="${link(filter, page - 1)}">Previous</a> ` : ''}Page ${page} of ${pages}${page < pages ? ` <a href="${link(filter, page + 1)}">Next</a>` : ''}</p>`
       : '';
@@ -243,6 +261,8 @@ body { font-family: system-ui, sans-serif; color: var(--fg); background: var(--b
 table { border-collapse: collapse; width: 100%; }
 th, td { border-bottom: 1px solid var(--line); padding: 6px; text-align: left; font-size: 14px; }
 button { margin-right: 6px; }
+form[role="search"] { margin: 12px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+form[role="search"] input[type="search"] { flex: 1 1 220px; min-width: 0; padding: 4px 6px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); }
 td.line { overflow-wrap: anywhere; }
 @media (max-width: 640px) { th:nth-child(6), td:nth-child(6) { display: none; } }
 </style>
@@ -252,6 +272,7 @@ td.line { overflow-wrap: anywhere; }
 <p>Pending and masked items stay masked. "Not a secret" shows the value from the next request onward. Earlier parts of each conversation keep their placeholders.
 "Last line" is the last line that referenced the value, with the value shown as its placeholder. "Show value" opens a new page with the value highlighted in the line it came from. Values and lines are stored on this machine, in values.sqlite. "Forget value" deletes the stored value and its lines and keeps the status.</p>
 ${tabs}
+${searchForm}
 <p>${range}</p>
 ${pager}
 <table>
