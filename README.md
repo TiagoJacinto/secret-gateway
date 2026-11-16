@@ -4,7 +4,7 @@ A local gateway for Claude Code (Anthropic Messages) and Codex (Responses). It m
 
 ## Codex Masked
 
-On this machine, run `codex-masked` or select **Codex Masked** in T3. The launcher uses the existing Codex login and sends Responses requests to the same gateway as Claude Code, on `127.0.0.1:8787`, under the path prefix `/codex`. The review page is `http://127.0.0.1:8787/review` for both clients.
+On this machine, run `codex-masked` or select **Codex Masked** in T3. The launcher uses the existing Codex login and sends Responses requests to the same gateway as Claude Code, on `127.0.0.1:8787`, under the path prefix `/codex`. The review page is `http://127.0.0.1:8788/review` for both clients. The gateway serves only JSON, so the page runs as a separate process (see Run).
 
 The gateway is one process with one data directory. Requests under `/codex` use the Responses adapter and `RESPONSES_UPSTREAM_BASE_URL`. All other requests use the Anthropic adapter and `UPSTREAM_BASE_URL`. The installed launcher is maintained in `scripts/codex-masked`. The gateway runs as `secret-gateway.service`; inspect it with `systemctl --user status secret-gateway.service`.
 
@@ -12,7 +12,7 @@ The Responses adapter scans instructions, messages, tool results, tool arguments
 
 This protects model request text. Local Codex session files and tool output are outside the masking boundary. The service runs from the main checkout, `~/Desktop/repos/secret-gateway`, set by `WorkingDirectory` in `~/.config/systemd/user/secret-gateway.service`. Changes take effect there only after they are merged to `main`, pulled into that checkout, and the service is restarted.
 
-Personal use, on one machine. Bun and TypeScript. The gateway listens on loopback only.
+Personal use, on one machine. Bun and TypeScript for the gateway. The review page is a React and TypeScript app built with Vite and the React Compiler. The gateway listens on loopback only.
 
 ## What it does
 
@@ -21,14 +21,14 @@ Personal use, on one machine. Bun and TypeScript. The gateway listens on loopbac
 - Replaces each secret with a stable placeholder `⟦SECRET_<6 hex>⟧`. The placeholder is an HMAC of the secret under a local key, so the same secret keeps its placeholder across requests and restarts.
 - Restores placeholders in tool-use inputs of responses, including streamed responses.
 - Withholds a Claude Code tool call that uses a placeholder the request did not mask, such as one the model invented. That placeholder has no value, so the call would run with its literal text, for example as a file name. The gateway renames the call to `secret_gateway_withheld` and puts the reason in its input. Claude Code reports the unknown tool to the model, which reads the reason. Codex (Responses) calls are not checked this way yet.
-- Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:<port>/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again. A placeholder inside link text, a link destination or a bare URL stays plain and gets no review link, because a link cannot sit inside a link.
+- Links each placeholder in response text to its review page: `[⟦SECRET_<6 hex>⟧](http://127.0.0.1:8788/review/reveal/<identity>?token=<token>)`. The link carries the review token, so the token appears in the agent's replies and in Claude Code's transcript files on disk. The gateway reduces these links to the bare placeholder in later requests, so the token is not sent upstream again. A placeholder inside link text, a link destination or a bare URL stays plain and gets no review link, because a link cannot sit inside a link.
 - Does not mask screenshots. Images pass through unchanged. See Limits.
 - Holds every new detection masked until you answer it on a local review page. Answers are remembered by identity.
 - Refuses a request rather than sending it raw when masking or the upstream fails.
 
 ## Setup
 
-Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscription (`claude auth status` should show `loggedIn: true`). No API key is needed.
+Requirements: Bun 1.3 or later, Node.js 20.19 or later (or 22.12 or later) for Vite, Claude Code logged in with your Claude subscription (`claude auth status` should show `loggedIn: true`). No API key is needed.
 
 1. Install the provider scanner into `.tools/bin` (gitignored). The version is Betterleaks 1.9.0 and the archive checksum is `f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7`.
 
@@ -40,7 +40,7 @@ Requirements: Bun 1.3 or later, Claude Code logged in with your Claude subscript
    .tools/bin/betterleaks version
    ```
 
-2. The gateway has no npm dependencies. Bun runs it directly, so there is no install step.
+2. Install the dependencies once from the repository root with `bun install`. They are Vite, React, TypeScript and the React Compiler, used to build the review page into `web/dist` (gitignored).
 
 3. Enable the pre-commit secret check. Install [lefthook](https://lefthook.dev) and [gitleaks](https://github.com/gitleaks/gitleaks) on your PATH, then run `lefthook install` in the repository root once. A commit with a staged secret is then blocked.
 
@@ -53,7 +53,9 @@ cd /path/to/secret-gateway
 bun run start
 ```
 
-It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. The same lines go to `gateway.log` in the data directory (mode 0600), When the file passes 10 MB, the gateway moves it to `gateway.log.1` (replacing the previous `.1`) and starts a new one. Each proxied request has one line, for example `POST /v1/messages 200 412ms masked=1 session=3f9a1c2e`. Each new detection (`pending <identity prefix> from <source> (length N)`) and each review answer (`review answer <identity prefix> <status>`) has one line too. Lines hold counts and 8-character identity or session prefixes, never values or message text. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, `RESPONSES_UPSTREAM_BASE_URL=https://chatgpt.com/backend-api/codex`, data in `~/.local/share/secret-gateway`. The data directory holds `identity.key` (mode 0600, the HMAC key), `review.token` (mode 0600, the review token), `answers.sqlite` (statuses and conversation records, no values), `values.sqlite` (mode 0600, the masked values, their appearances and last lines) and `gateway.log` (mode 0600). Change the defaults with environment variables, and see the verification README for the full list.
+`bun run start` starts only the gateway (JSON on `127.0.0.1:8787`, no page). `bun run start:web` builds the review page with Vite and serves it on `http://127.0.0.1:8788/review`. Run it in a second terminal while the gateway runs. To build it alone, run `bun run build:web`. To type-check the review page, run `bun run typecheck`. All of these need the step 2 install. The page reads the gateway from `http://127.0.0.1:8787` (set `VITE_GATEWAY_URL` at build time to change it). The gateway accepts browser requests only from `REVIEW_WEB_ORIGIN` (default `http://127.0.0.1:8788`), so open the page at that address.
+
+It logs `secret-gateway listening on http://127.0.0.1:8787` and the review page address. The same lines go to `gateway.log` in the data directory (mode 0600), When the file passes 10 MB, the gateway moves it to `gateway.log.1` (replacing the previous `.1`) and starts a new one. Each proxied request has one line, for example `POST /v1/messages 200 412ms masked=1 session=3f9a1c2e`. Each new detection (`pending <identity prefix> from <source> (length N)`) and each review answer (`review answer <identity prefix> <status>`) has one line too. Lines hold counts and 8-character identity or session prefixes, never values or message text. Defaults: `HOST=127.0.0.1`, `PORT=8787`, `REVIEW_WEB_ORIGIN=http://127.0.0.1:8788`, `UPSTREAM_BASE_URL=https://api.anthropic.com`, `RESPONSES_UPSTREAM_BASE_URL=https://chatgpt.com/backend-api/codex`, data in `~/.local/share/secret-gateway`. The data directory holds `identity.key` (mode 0600, the HMAC key), `review.token` (mode 0600, the review token), `answers.sqlite` (statuses and conversation records, no values), `values.sqlite` (mode 0600, the masked values, their appearances and last lines) and `gateway.log` (mode 0600). Change the defaults with environment variables, and see the verification README for the full list.
 
 ## Use Claude Code through the gateway
 
@@ -104,7 +106,7 @@ The prompt note tells the agent what to do when it sees a credential in plain te
 
 ## Review detections
 
-Open http://127.0.0.1:8787/review while the gateway runs. Each row shows an identity prefix, status, source (for example `tool result from Bash`), the last line, and length.
+Open http://127.0.0.1:8788/review while the gateway and `bun run start:web` run. Each row shows an identity prefix, status, source (for example `tool result from Bash`), the last line, and length.
 
 - **Last line** is the last line where the gateway saw the value. The value appears as its placeholder, with no review link. For text the agent wrote, it is the last line of that response. For text sent to the model, it is the last line of the most recent request that held the value. A value that appears only in a tool call the agent made is recorded when the next request sends that call back. The line is written to `values.sqlite` every 5 seconds and at shutdown, so it survives a restart. A row with no stored last line shows "not stored". Masked values appear only as placeholders. Other text in the line is shown as sent or written, so a value you answered "Not a secret" can appear there in full.
 
