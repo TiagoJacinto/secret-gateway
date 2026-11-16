@@ -22,11 +22,15 @@ export function useAnswer() {
   });
 }
 
+// A forget also clears the value queries, so an open reveal page shows that no value is stored.
 export function useForget() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => forget(id),
-    onSuccess: () => client.invalidateQueries({ queryKey: reviewPagesKey }),
+    onSuccess: () => Promise.all([
+      client.invalidateQueries({ queryKey: reviewPagesKey }),
+      client.invalidateQueries({ queryKey: ['values'] }),
+    ]),
   });
 }
 
